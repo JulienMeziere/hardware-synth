@@ -6,6 +6,8 @@
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "public.sdk/source/vst/vstparameters.h"
 
+#include "../Logger.h"
+
 #include "Processor.h"
 #include "../cids.h"
 
@@ -68,7 +70,7 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	tresult PLUGIN_API HardwareSynthProcessor::process(Vst::ProcessData &data)
 	{
-		//--- First : Read inputs parameter changes-----------
+		//--- Read inputs parameter changes-----------
 		if (data.inputParameterChanges)
 		{
 			int32 numParamsChanged = data.inputParameterChanges->getParameterCount();
@@ -135,6 +137,7 @@ namespace Newkon
 	tresult PLUGIN_API HardwareSynthProcessor::setupProcessing(Vst::ProcessSetup &newSetup)
 	{
 		//--- called before any processing ----
+		sampleRate = newSetup.sampleRate;
 		return AudioEffect::setupProcessing(newSetup);
 	}
 
@@ -203,6 +206,12 @@ namespace Newkon
 		streamer.writeFloat(this->knob8Val);
 
 		return kResultOk;
+	}
+
+	//------------------------------------------------------------------------
+	uint32 PLUGIN_API HardwareSynthProcessor::getLatencySamples()
+	{
+		return static_cast<uint32>(sampleRate * 1.0);
 	}
 
 	//------------------------------------------------------------------------

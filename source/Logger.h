@@ -46,7 +46,7 @@ namespace Newkon
     }
 
   private:
-    Logger(bool debug = true) : std::ofstream(debug ? "C:\\Users\\jusde\\dev\\hardware-synth\\plugin\\serialLogs.txt" : "", debug ? std::ios::app : std::ios::out) {}
+    Logger(bool debug = true) : std::ofstream(debug ? "C:\\Users\\jusde\\dev\\hardware-synth\\logs.txt" : "", debug ? std::ios::app : std::ios::out) {}
   };
 #endif
 } // namespace Newkon

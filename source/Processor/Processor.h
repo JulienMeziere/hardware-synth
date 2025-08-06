@@ -53,6 +53,9 @@ namespace Newkon
 		Steinberg::tresult PLUGIN_API setState(Steinberg::IBStream *state) SMTG_OVERRIDE;
 		Steinberg::tresult PLUGIN_API getState(Steinberg::IBStream *state) SMTG_OVERRIDE;
 
+		/** Returns latency in samples */
+		Steinberg::uint32 PLUGIN_API getLatencySamples() SMTG_OVERRIDE;
+
 		//------------------------------------------------------------------------
 	protected:
 		float knob1Val = DEFAULT_KNOB_VALUE;
@@ -63,6 +66,8 @@ namespace Newkon
 		float knob6Val = DEFAULT_KNOB_VALUE;
 		float knob7Val = DEFAULT_KNOB_VALUE;
 		float knob8Val = DEFAULT_KNOB_VALUE;
+
+		double sampleRate = 44100.0;
 	};
 
 	//------------------------------------------------------------------------
