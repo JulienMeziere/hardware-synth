@@ -10,7 +10,8 @@
 #include "../cids.h"
 
 #include "../Logger.h"
-#include "../utils/includes.h"
+#include "../Hardware/MIDIDevices.h"
+#include "../Hardware/HardwareSynthesizer.h"
 
 using namespace Steinberg;
 namespace Newkon
@@ -32,23 +33,49 @@ namespace Newkon
 
 		setKnobMode(Vst::kLinearMode);
 
-		// Here you could register some parameters
-		parameters.addParameter(STR16("Knob to CV 1"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToCV1);
-		// parameters.addParameter(STR16("Knob 1 Min"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnob1Min);
-		// parameters.addParameter(STR16("Knob 1 Max"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnob1Max);
-
-		parameters.addParameter(STR16("Knob to CV 2"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToCV2);
-		// parameters.addParameter(STR16("Knob 2 Min"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnob2Min);
-		// parameters.addParameter(STR16("Knob 2 Max"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnob2Max);
-
-		parameters.addParameter(STR16("Knob to CV 3"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToCV3);
-		parameters.addParameter(STR16("Knob to CV 4"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToCV4);
-		parameters.addParameter(STR16("Knob to CV 5"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToCV5);
-		parameters.addParameter(STR16("Knob to CV 6"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToCV6);
-		parameters.addParameter(STR16("Knob to Gate 1"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToGate1);
-		parameters.addParameter(STR16("Knob to Gate 2"), STR16("%"), 0, DEFAULT_KNOB_VALUE, Vst::ParameterInfo::kCanAutomate, kKnobToGate2);
+		// Register your parameters here
 
 		Logger::getInstance();
+
+		// List MIDI devices
+		Logger::getInstance() << "=== MIDI Device Detection (Controller) ===" << std::endl;
+		std::vector<std::string> midiDevices = MIDIDevices::listMIDIdevices();
+		Logger::getInstance() << "Total MIDI devices found: " << midiDevices.size() << std::endl;
+		Logger::getInstance() << "=== End MIDI Device Detection ===" << std::endl;
+
+		// Connect to device index 2 (Neutron)
+		Logger::getInstance() << "=== Connecting to Device Index 2 ===" << std::endl;
+		auto synthesizer = MIDIDevices::connectToDevice(2);
+		if (synthesizer)
+		{
+			Logger::getInstance() << "Successfully connected to: " << synthesizer->getDeviceName() << std::endl;
+			Logger::getInstance() << "Starting A4 note loop (500ms on/off)..." << std::endl;
+
+			// Send A4 note (note 69) in a loop
+			for (int i = 0; i < 10; i++) // Send 10 cycles for testing
+			{
+				// Note on
+				synthesizer->sendMIDINote(69, 100, 0);
+				Logger::getInstance() << "A4 ON" << std::endl;
+
+				// Wait 500ms (simplified - in real implementation you'd use proper timing)
+				Sleep(500);
+
+				// Note off (proper MIDI Note Off message)
+				synthesizer->sendMIDINoteOff(69, 0);
+				Logger::getInstance() << "A4 OFF" << std::endl;
+
+				// Wait 500ms
+				Sleep(500);
+			}
+
+			Logger::getInstance() << "A4 note loop completed" << std::endl;
+		}
+		else
+		{
+			Logger::getInstance() << "Failed to connect to device index 2" << std::endl;
+		}
+		Logger::getInstance() << "=== End Connection ===" << std::endl;
 
 		return result;
 	}
@@ -72,23 +99,7 @@ namespace Newkon
 
 		IBStreamer streamer(state, kLittleEndian);
 
-		float val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		setParamNormalized(kKnobToCV1, val);
-		// setParamNormalized(kKnob1Min, val);
-		// setParamNormalized(kKnob1Max, val);
-
-		setParamNormalized(kKnobToCV2, val);
-		// setParamNormalized(kKnob2Min, val);
-		// setParamNormalized(kKnob2Max, val);
-
-		setParamNormalized(kKnobToCV3, val);
-		setParamNormalized(kKnobToCV4, val);
-		setParamNormalized(kKnobToCV5, val);
-		setParamNormalized(kKnobToCV6, val);
-		setParamNormalized(kKnobToGate1, val);
-		setParamNormalized(kKnobToGate2, val);
+		// Restore your parameter states here
 
 		return kResultOk;
 	}
@@ -118,9 +129,6 @@ namespace Newkon
 		{
 			// create your editor here and return a IPlugView ptr of it
 			this->editor = new VSTGUI::VST3Editor(this, "view", "editor.uidesc");
-			setTimeout([this]()
-								 { this->panelManager->initialize(this->editor); },
-								 500);
 			return this->editor;
 		}
 		this->editor = nullptr;
@@ -133,35 +141,12 @@ namespace Newkon
 		// called by host to update your parameters
 		tresult result = EditControllerEx1::setParamNormalized(tag, value);
 
-		// Check which parameter changed
+		// Handle your parameter changes here
 		if (result == kResultOk)
 		{
 			switch (tag)
 			{
-			case kKnobToCV1:
-				this->panelManager->focusPannel(0);
-				break;
-			case kKnobToCV2:
-				this->panelManager->focusPannel(1);
-				break;
-			case kKnobToCV3:
-				this->panelManager->focusPannel(2);
-				break;
-			case kKnobToCV4:
-				this->panelManager->focusPannel(3);
-				break;
-			case kKnobToCV5:
-				this->panelManager->focusPannel(4);
-				break;
-			case kKnobToCV6:
-				this->panelManager->focusPannel(5);
-				break;
-			case kKnobToGate1:
-				this->panelManager->focusPannel(6);
-				break;
-			case kKnobToGate2:
-				this->panelManager->focusPannel(7);
-				break;
+				// Add your parameter cases here
 			}
 		}
 

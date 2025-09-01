@@ -4,6 +4,7 @@
 
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "pluginterfaces/vst/ivstcomponent.h"
 #include "public.sdk/source/vst/vstparameters.h"
 
 #include "../Logger.h"
@@ -70,7 +71,7 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	tresult PLUGIN_API HardwareSynthProcessor::process(Vst::ProcessData &data)
 	{
-		//--- Read inputs parameter changes-----------
+		// Read inputs parameter changes
 		if (data.inputParameterChanges)
 		{
 			int32 numParamsChanged = data.inputParameterChanges->getParameterCount();
@@ -84,38 +85,7 @@ namespace Newkon
 					paramQueue->getPoint(numPoints - 1, sampleOffset, value);
 					switch (paramQueue->getParameterId())
 					{
-					case kKnobToCV1:
-						this->knob1Val = (float)value;
-						// controller.setParamValue(0, this->knob1Val);
-						break;
-					case kKnobToCV2:
-						this->knob2Val = (float)value;
-						// controller.setParamValue(1, this->knob2Val);
-						break;
-					case kKnobToCV3:
-						this->knob3Val = (float)value;
-						// controller.setParamValue(2, this->knob3Val);
-						break;
-					case kKnobToCV4:
-						this->knob4Val = (float)value;
-						// controller.setParamValue(3, this->knob4Val);
-						break;
-					case kKnobToCV5:
-						this->knob5Val = (float)value;
-						// controller.setParamValue(4, this->knob5Val);
-						break;
-					case kKnobToCV6:
-						this->knob6Val = (float)value;
-						// controller.setParamValue(5, this->knob6Val);
-						break;
-					case kKnobToGate1:
-						this->knob7Val = (float)value;
-						// controller.setParamValue(6, this->knob7Val);
-						break;
-					case kKnobToGate2:
-						this->knob8Val = (float)value;
-						// controller.setParamValue(7, this->knob8Val);
-						break;
+						// Handle your parameter changes here
 					}
 				}
 			}
@@ -138,6 +108,10 @@ namespace Newkon
 	{
 		//--- called before any processing ----
 		sampleRate = newSetup.sampleRate;
+		bufferSize = newSetup.maxSamplesPerBlock;
+		Logger::getInstance() << "Buffer size: " << bufferSize << " samples" << std::endl;
+		Logger::getInstance() << "Sample rate: " << sampleRate << " Hz" << std::endl;
+
 		return AudioEffect::setupProcessing(newSetup);
 	}
 
@@ -161,31 +135,7 @@ namespace Newkon
 		// called when we load a preset, the model has to be reloaded
 		IBStreamer streamer(state, kLittleEndian);
 
-		float val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob1Val = val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob2Val = val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob3Val = val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob4Val = val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob5Val = val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob6Val = val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob7Val = val;
-		if (streamer.readFloat(val) == false)
-			return kResultFalse;
-		this->knob8Val = val;
+		// Restore your parameter states here
 
 		return kResultOk;
 	}
@@ -196,14 +146,7 @@ namespace Newkon
 		// here we need to save the model
 		IBStreamer streamer(state, kLittleEndian);
 
-		streamer.writeFloat(this->knob1Val);
-		streamer.writeFloat(this->knob2Val);
-		streamer.writeFloat(this->knob3Val);
-		streamer.writeFloat(this->knob4Val);
-		streamer.writeFloat(this->knob5Val);
-		streamer.writeFloat(this->knob6Val);
-		streamer.writeFloat(this->knob7Val);
-		streamer.writeFloat(this->knob8Val);
+		// Save your parameter states here
 
 		return kResultOk;
 	}
@@ -211,7 +154,28 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	uint32 PLUGIN_API HardwareSynthProcessor::getLatencySamples()
 	{
-		return static_cast<uint32>(sampleRate * 1.0);
+		return static_cast<uint32>(sampleRate * currentLatencySeconds);
+	}
+
+	//------------------------------------------------------------------------
+	void HardwareSynthProcessor::setLatency(double latencySeconds)
+	{
+		if (currentLatencySeconds != latencySeconds)
+		{
+			currentLatencySeconds = latencySeconds;
+			Logger::getInstance() << "Latency changed to: " << latencySeconds << " seconds" << std::endl;
+
+			// Notify host that latency has changed
+			// This forces FL Studio to restart audio processing
+			if (auto *host = getHostContext())
+			{
+				Steinberg::FUnknownPtr<Steinberg::Vst::IComponentHandler> componentHandler(host);
+				if (componentHandler)
+				{
+					componentHandler->restartComponent(Steinberg::Vst::kLatencyChanged);
+				}
+			}
+		}
 	}
 
 	//------------------------------------------------------------------------

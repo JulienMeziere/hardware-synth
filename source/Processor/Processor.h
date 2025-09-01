@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <chrono>
 
 #include "public.sdk/source/vst/vstaudioeffect.h"
 
@@ -56,18 +57,19 @@ namespace Newkon
 		/** Returns latency in samples */
 		Steinberg::uint32 PLUGIN_API getLatencySamples() SMTG_OVERRIDE;
 
+		/** Change latency dynamically */
+		void setLatency(double latencySeconds);
+
 		//------------------------------------------------------------------------
 	protected:
-		float knob1Val = DEFAULT_KNOB_VALUE;
-		float knob2Val = DEFAULT_KNOB_VALUE;
-		float knob3Val = DEFAULT_KNOB_VALUE;
-		float knob4Val = DEFAULT_KNOB_VALUE;
-		float knob5Val = DEFAULT_KNOB_VALUE;
-		float knob6Val = DEFAULT_KNOB_VALUE;
-		float knob7Val = DEFAULT_KNOB_VALUE;
-		float knob8Val = DEFAULT_KNOB_VALUE;
-
 		double sampleRate = 44100.0;
+		Steinberg::int32 bufferSize = 512;
+		double currentLatencySeconds = 1.0;
+
+		// Latency debounce state
+		bool latencyChangePending = false;
+		double pendingLatencySeconds = 1.0;
+		std::chrono::steady_clock::time_point lastLatencyChangeRequest;
 	};
 
 	//------------------------------------------------------------------------

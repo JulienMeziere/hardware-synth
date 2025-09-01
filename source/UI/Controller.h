@@ -7,8 +7,6 @@
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "vstgui/plugin-bindings/vst3editor.h"
 
-#include "Panel/PanelManager.h"
-
 namespace Newkon
 {
 
@@ -19,7 +17,7 @@ namespace Newkon
 	{
 	public:
 		//------------------------------------------------------------------------
-		HardwareSynthController() : panelManager(std::make_unique<PanelManager>()) {};
+		HardwareSynthController() {};
 		~HardwareSynthController() SMTG_OVERRIDE = default;
 
 		// Create function
@@ -55,7 +53,6 @@ namespace Newkon
 
 		//------------------------------------------------------------------------
 	private:
-		std::unique_ptr<PanelManager> panelManager;
 		VSTGUI::VST3Editor *editor = nullptr;
 	};
 

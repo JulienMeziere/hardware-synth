@@ -10,8 +10,8 @@
 namespace Newkon
 {
   //------------------------------------------------------------------------
-  static const Steinberg::FUID kHardwareSynthProcessorUID(0x0A423737, 0x6BBC558E, 0x8736B74E, 0xE4D15F73);
-  static const Steinberg::FUID kHardwareSynthControllerUID(0x61CE2421, 0x9F1858C3, 0x99F5797F, 0x18A862C5);
+  static const Steinberg::FUID kHardwareSynthProcessorUID(0x12345678, 0x9ABCDEF0, 0x11223344, 0x55667788);
+  static const Steinberg::FUID kHardwareSynthControllerUID(0x87654321, 0x0FEDCBA9, 0x44332211, 0x88776655);
 
 #define HardwareSynthVST3Category "Instrument"
 

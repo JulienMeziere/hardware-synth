@@ -29,11 +29,10 @@ smtg_add_vst3plugin(Hardware_Synth
     source/cids.h
     source/entry.cpp
     source/Logger.h
-
-    # Utils
-    source/utils/includes.h
-    source/utils/setTimeout/setTimeout.h
-    source/utils/setTimeout/setTimeout.cpp
+    source/Hardware/MIDIDevices.h
+    source/Hardware/MIDIDevices.cpp
+    source/Hardware/HardwareSynthesizer.h
+    source/Hardware/HardwareSynthesizer.cpp
 
     # Processor
     source/Processor/Processor.h
@@ -42,12 +41,6 @@ smtg_add_vst3plugin(Hardware_Synth
     # UI
     source/UI/Controller.h
     source/UI/Controller.cpp
-    source/UI/Panel/PanelManager.h
-    source/UI/Panel/PanelManager.cpp
-    source/UI/Panel/Panel.h
-    source/UI/Panel/Panel.cpp
-    source/UI/constants/Colors.h
-    source/UI/constants/Colors.cpp
 )
 
 # Set build-specific compiler definitions
@@ -84,6 +77,11 @@ target_link_libraries(Hardware_Synth
     PRIVATE
     sdk
 )
+
+# Link Windows multimedia library for MIDI device enumeration
+if(WIN32)
+    target_link_libraries(Hardware_Synth PRIVATE winmm)
+endif()
 
 smtg_target_configure_version_file(Hardware_Synth)
 
