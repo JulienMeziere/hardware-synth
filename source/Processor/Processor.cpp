@@ -10,6 +10,7 @@
 
 #include "../Logger.h"
 #include "../Hardware/MIDIDevices.h"
+#include "../Hardware/AsioInterfaces.h"
 
 #include "Processor.h"
 #include "../cids.h"
@@ -56,7 +57,8 @@ namespace Newkon
 		}
 
 		//--- create Audio IO ------
-		addAudioInput(STR16("Stereo In"), Steinberg::Vst::SpeakerArr::kStereo);
+		// Add audio input bus for ASIO interface audio
+		addAudioInput(STR16("ASIO Input"), Steinberg::Vst::SpeakerArr::kStereo);
 		addAudioOutput(STR16("Stereo Out"), Steinberg::Vst::SpeakerArr::kStereo);
 
 		/* If you don't need an event bus, you can remove the next line */
@@ -151,14 +153,22 @@ namespace Newkon
 			}
 		}
 
-		//--- Here you have to implement your processing
-		// Vst::Sample32 *outL = data.outputs[0].channelBuffers32[0];
-		// Vst::Sample32 *outR = data.outputs[0].channelBuffers32[1];
-		// for (int32 i = 0; i < data.numSamples; i++)
-		// {
-		// 	outL[i] = 0;
-		// 	outR[i] = 0;
-		// }
+		//--- Audio processing: Forward ASIO input to DAW output
+		if (data.numSamples > 0 && data.outputs && data.outputs[0].numChannels >= 2)
+		{
+			Vst::Sample32 *outL = data.outputs[0].channelBuffers32[0];
+			Vst::Sample32 *outR = data.outputs[0].channelBuffers32[1];
+
+			// Pull audio directly into output buffers (no intermediate alloc)
+			if (!AsioInterfaces::getAudioDataStereo(outL, outR, data.numSamples))
+			{
+				for (int32 i = 0; i < data.numSamples; i++)
+				{
+					outL[i] = 0.0f;
+					outR[i] = 0.0f;
+				}
+			}
+		}
 
 		return kResultOk;
 	}
@@ -285,7 +295,6 @@ namespace Newkon
 		connectedSynthesizer = std::move(MIDIDevices::connectToDevice(deviceIndex));
 		if (connectedSynthesizer)
 		{
-			Logger::getInstance() << "Connected to: " + connectedSynthesizer->getDeviceName() << std::endl;
 			return true;
 		}
 		return false;
@@ -296,7 +305,6 @@ namespace Newkon
 	{
 		if (connectedSynthesizer)
 		{
-			Logger::getInstance() << "Disconnected from: " + connectedSynthesizer->getDeviceName() << std::endl;
 			connectedSynthesizer.reset();
 		}
 	}

@@ -21,6 +21,7 @@
 #include <memory>
 
 #include "../Hardware/HardwareSynthesizer.h"
+#include "../Hardware/AsioInterfaces.h"
 #include "../Processor/Processor.h"
 
 namespace Newkon
@@ -69,6 +70,9 @@ namespace Newkon
 		/** Get the processor instance */
 		HardwareSynthProcessor *getProcessor();
 
+		/** Show audio inputs scrollview */
+		void showAudioInputs();
+
 		//---Interface---------
 		DEFINE_INTERFACES
 		// Here you can add more supported VST3 interfaces
@@ -79,12 +83,20 @@ namespace Newkon
 		//------------------------------------------------------------------------
 	private:
 		void createDeviceButtons();
+		void createAsioInterfaceButtons();
+		void showAsioInputs();
+		void createAsioInputButtons();
 
 		//------------------------------------------------------------------------
 	private:
 		VSTGUI::VST3Editor *editor = nullptr;
 		std::vector<std::string> midiDevices;
+		std::vector<std::string> asioInterfaces;
+		std::vector<std::string> asioInputs;
+		int selectedAsioInterface = -1; // Store selected ASIO interface index
 		VSTGUI::CScrollView *scrollView = nullptr;
+		VSTGUI::CScrollView *audioInputsScrollView = nullptr;
+		VSTGUI::CScrollView *asioInputsScrollView = nullptr;
 	};
 
 	//------------------------------------------------------------------------

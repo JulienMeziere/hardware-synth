@@ -132,6 +132,58 @@
 							"vertical-scrollbar": "true",
 							"wants-focus": "false"
 						}
+					},
+					"CScrollView": {
+						"attributes": {
+							"auto-drag-scrolling": "false",
+							"auto-hide-scrollbars": "true",
+							"background-color": "Background",
+							"background-color-draw-style": "filled and stroked",
+							"bordered": "false",
+							"class": "CScrollView",
+							"container-size": "200, 200",
+							"follow-focus-view": "false",
+							"horizontal-scrollbar": "false",
+							"mouse-enabled": "true",
+							"opacity": "1",
+							"origin": "0, 0",
+							"overlay-scrollbars": "false",
+							"scrollbar-background-color": "#ffffffc8",
+							"scrollbar-frame-color": "Background",
+							"scrollbar-scroller-color": "Knob1",
+							"scrollbar-width": "8",
+							"size": "1140, 490",
+							"transparent": "false",
+							"uidesc-label": "inputs-scrollview",
+							"vertical-scrollbar": "true",
+							"wants-focus": "false"
+						}
+					},
+					"CScrollView": {
+						"attributes": {
+							"auto-drag-scrolling": "false",
+							"auto-hide-scrollbars": "true",
+							"background-color": "Background",
+							"background-color-draw-style": "filled and stroked",
+							"bordered": "false",
+							"class": "CScrollView",
+							"container-size": "200, 200",
+							"follow-focus-view": "false",
+							"horizontal-scrollbar": "false",
+							"mouse-enabled": "true",
+							"opacity": "1",
+							"origin": "0, 0",
+							"overlay-scrollbars": "false",
+							"scrollbar-background-color": "#ffffffc8",
+							"scrollbar-frame-color": "Background",
+							"scrollbar-scroller-color": "Knob1",
+							"scrollbar-width": "8",
+							"size": "1140, 490",
+							"transparent": "false",
+							"uidesc-label": "asio-inputs-scrollview",
+							"vertical-scrollbar": "true",
+							"wants-focus": "false"
+						}
 					}
 				}
 			}

@@ -2,9 +2,14 @@ cmake_minimum_required(VERSION 3.14.0)
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.13 CACHE STRING "")
 
 set(vst3sdk_SOURCE_DIR "${CMAKE_SOURCE_DIR}/libs/vst3sdk")
+set(asiosdk_SOURCE_DIR "${CMAKE_SOURCE_DIR}/libs/asiosdk")
 
 if(NOT vst3sdk_SOURCE_DIR)
     message(FATAL_ERROR "Path to VST3 SDK is empty!")
+endif()
+
+if(NOT asiosdk_SOURCE_DIR)
+    message(FATAL_ERROR "Path to ASIO SDK is empty!")
 endif()
 
 project(Hardware_Synth
@@ -33,6 +38,13 @@ smtg_add_vst3plugin(Hardware_Synth
     source/Hardware/MIDIDevices.cpp
     source/Hardware/HardwareSynthesizer.h
     source/Hardware/HardwareSynthesizer.cpp
+    source/Hardware/AsioInterfaces.h
+    source/Hardware/AsioInterfaces.cpp
+
+    # ASIO SDK (host-side) sources
+    ${asiosdk_SOURCE_DIR}/host/pc/asiolist.cpp
+    ${asiosdk_SOURCE_DIR}/host/asiodrivers.cpp
+    ${asiosdk_SOURCE_DIR}/common/asio.cpp
 
     # Processor
     source/Processor/Processor.h
@@ -50,6 +62,23 @@ target_compile_definitions(Hardware_Synth
     PRIVATE
     $<$<CONFIG:Debug>:HARDWARE_SYNTH_DEBUG=1>
     $<$<CONFIG:Release>:HARDWARE_SYNTH_RELEASE=1>
+)
+
+# Add ASIO SDK include directories
+target_include_directories(Hardware_Synth
+    PRIVATE
+    ${asiosdk_SOURCE_DIR}/common
+    ${asiosdk_SOURCE_DIR}/host
+    ${asiosdk_SOURCE_DIR}/host/pc
+)
+
+# Build ASIO SDK sources without UNICODE to match their ANSI WinAPI usage
+set_source_files_properties(
+    ${asiosdk_SOURCE_DIR}/host/pc/asiolist.cpp
+    ${asiosdk_SOURCE_DIR}/host/asiodrivers.cpp
+    ${asiosdk_SOURCE_DIR}/common/asio.cpp
+    PROPERTIES
+    COMPILE_FLAGS "/UUNICODE /U_UNICODE"
 )
 
 # - VSTGUI Wanted ----
@@ -80,9 +109,14 @@ target_link_libraries(Hardware_Synth
     sdk
 )
 
+# Enable AVX2 for MSVC to help auto-vectorization
+if(MSVC)
+    target_compile_options(Hardware_Synth PRIVATE /arch:AVX2)
+endif()
+
 # Link Windows multimedia library for MIDI device enumeration
 if(WIN32)
-    target_link_libraries(Hardware_Synth PRIVATE winmm)
+    target_link_libraries(Hardware_Synth PRIVATE winmm ole32 oleaut32 dsound)
 endif()
 
 smtg_target_configure_version_file(Hardware_Synth)

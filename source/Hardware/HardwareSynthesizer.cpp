@@ -56,7 +56,6 @@ namespace Newkon
   {
     if (!connected || inputDevice)
     {
-      Logger::getInstance() << "Cannot send MIDI note - device not connected or is input device" << std::endl;
       return false;
     }
 
@@ -68,14 +67,10 @@ namespace Newkon
     MMRESULT result = midiOutShortMsg(midiOutHandle, midiMessage);
     if (result == MMSYSERR_NOERROR)
     {
-      Logger::getInstance() << "Sent MIDI note " << note << " (velocity: " << velocity
-                            << ", channel: " << channel << ") to " << deviceName << std::endl;
       return true;
     }
     else
     {
-      Logger::getInstance() << "Failed to send MIDI note to " << deviceName
-                            << " (Error: " << result << ")" << std::endl;
       return false;
     }
   }
@@ -84,7 +79,7 @@ namespace Newkon
   {
     if (!connected || inputDevice)
     {
-      Logger::getInstance() << "Cannot send MIDI note off - device not connected or is input device" << std::endl;
+
       return false;
     }
 
@@ -96,13 +91,12 @@ namespace Newkon
     MMRESULT result = midiOutShortMsg(midiOutHandle, midiMessage);
     if (result == MMSYSERR_NOERROR)
     {
-      Logger::getInstance() << "Sent MIDI note OFF " << note << " (channel: " << channel << ") to " << deviceName << std::endl;
+
       return true;
     }
     else
     {
-      Logger::getInstance() << "Failed to send MIDI note OFF to " << deviceName
-                            << " (Error: " << result << ")" << std::endl;
+
       return false;
     }
   }
@@ -111,7 +105,7 @@ namespace Newkon
   {
     if (!connected || inputDevice)
     {
-      Logger::getInstance() << "Cannot send MIDI CC - device not connected or is input device" << std::endl;
+
       return false;
     }
 
@@ -123,14 +117,12 @@ namespace Newkon
     MMRESULT result = midiOutShortMsg(midiOutHandle, midiMessage);
     if (result == MMSYSERR_NOERROR)
     {
-      Logger::getInstance() << "Sent MIDI CC " << controller << " (value: " << value
-                            << ", channel: " << channel << ") to " << deviceName << std::endl;
+
       return true;
     }
     else
     {
-      Logger::getInstance() << "Failed to send MIDI CC to " << deviceName
-                            << " (Error: " << result << ")" << std::endl;
+
       return false;
     }
   }
