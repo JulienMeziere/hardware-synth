@@ -32,8 +32,6 @@ namespace Newkon
     // Get number of MIDI output devices only
     UINT numDevices = midiOutGetNumDevs();
 
-    Logger::getInstance() << "Found " << numDevices << " MIDI output devices" << std::endl;
-
     for (UINT i = 0; i < numDevices; i++)
     {
       MIDIOUTCAPS caps;
@@ -56,16 +54,14 @@ namespace Newkon
         // Store device info for later connection
         outputDevices.emplace_back(deviceName, manufacturer, i);
 
-        std::string deviceInfo = "Device " + std::to_string(i) + ": " + deviceName + " (" + manufacturer + ")";
-        devices.push_back(deviceInfo);
-
-        Logger::getInstance() << deviceInfo << std::endl;
+        // Return only the device name (not formatted with "Device X:")
+        devices.push_back(deviceName);
       }
       else
       {
-        std::string errorMsg = "Failed to get device info for device " + std::to_string(i) + " (Error: " + std::to_string(result) + ")";
+        // Return error message as device name for failed devices
+        std::string errorMsg = "Failed to get device " + std::to_string(i);
         devices.push_back(errorMsg);
-        Logger::getInstance() << errorMsg << std::endl;
       }
     }
 

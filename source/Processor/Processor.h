@@ -10,6 +10,7 @@
 #include "public.sdk/source/vst/vstaudioeffect.h"
 
 #include "../params.h"
+#include "../Hardware/HardwareSynthesizer.h"
 
 namespace Newkon
 {
@@ -60,16 +61,37 @@ namespace Newkon
 		/** Change latency dynamically */
 		void setLatency(double latencySeconds);
 
+		/** Connect to a hardware synthesizer by device index */
+		bool connectToSynthesizer(size_t deviceIndex);
+
+		/** Disconnect from current synthesizer */
+		void disconnectSynthesizer();
+
+		/** Check if a synthesizer is connected */
+		bool isSynthesizerConnected() const;
+
+		/** Get connected synthesizer device name */
+		std::string getConnectedSynthesizerName() const;
+
+		/** Get the current processor instance (for UI access) */
+		static HardwareSynthProcessor *getCurrentInstance();
+
 		//------------------------------------------------------------------------
 	protected:
 		double sampleRate = 44100.0;
 		Steinberg::int32 bufferSize = 512;
-		double currentLatencySeconds = 1.0;
+		double currentLatencySeconds = 0.0;
 
 		// Latency debounce state
 		bool latencyChangePending = false;
-		double pendingLatencySeconds = 1.0;
+		double pendingLatencySeconds = 0.0;
 		std::chrono::steady_clock::time_point lastLatencyChangeRequest;
+
+		// Hardware synthesizer management
+		std::unique_ptr<HardwareSynthesizer> connectedSynthesizer;
+
+		// Static reference for UI access
+		static HardwareSynthProcessor *currentInstance;
 	};
 
 	//------------------------------------------------------------------------

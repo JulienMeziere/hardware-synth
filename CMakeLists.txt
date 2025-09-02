@@ -41,6 +41,8 @@ smtg_add_vst3plugin(Hardware_Synth
     # UI
     source/UI/Controller.h
     source/UI/Controller.cpp
+    source/UI/constants/colors.h
+    source/UI/constants/colors.cpp
 )
 
 # Set build-specific compiler definitions

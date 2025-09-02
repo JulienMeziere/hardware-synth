@@ -6,6 +6,22 @@
 
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "vstgui/plugin-bindings/vst3editor.h"
+#include "vstgui4/vstgui/lib/vstguibase.h"
+
+// VSTGUI UI classes
+#include "vstgui4/vstgui/lib/cscrollview.h"
+#include "vstgui4/vstgui/lib/controls/cbuttons.h"
+#include "vstgui4/vstgui/lib/controls/icontrollistener.h"
+#include "vstgui4/vstgui/lib/crect.h"
+#include "vstgui4/vstgui/lib/ccolor.h"
+#include "vstgui4/vstgui/lib/cpoint.h"
+
+#include <vector>
+#include <string>
+#include <memory>
+
+#include "../Hardware/HardwareSynthesizer.h"
+#include "../Processor/Processor.h"
 
 namespace Newkon
 {
@@ -13,11 +29,11 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	//  HardwareSynthController
 	//------------------------------------------------------------------------
-	class HardwareSynthController : public Steinberg::Vst::EditControllerEx1
+	class HardwareSynthController : public Steinberg::Vst::EditControllerEx1, public VSTGUI::IControlListener
 	{
 	public:
 		//------------------------------------------------------------------------
-		HardwareSynthController() {};
+		HardwareSynthController();
 		~HardwareSynthController() SMTG_OVERRIDE = default;
 
 		// Create function
@@ -29,9 +45,9 @@ namespace Newkon
 		// IPluginBase
 		Steinberg::tresult PLUGIN_API initialize(Steinberg::FUnknown *context) SMTG_OVERRIDE;
 		Steinberg::tresult PLUGIN_API terminate() SMTG_OVERRIDE;
+		Steinberg::tresult PLUGIN_API setComponentState(Steinberg::IBStream *state) SMTG_OVERRIDE;
 
 		// EditController
-		Steinberg::tresult PLUGIN_API setComponentState(Steinberg::IBStream *state) SMTG_OVERRIDE;
 		Steinberg::IPlugView *PLUGIN_API createView(Steinberg::FIDString name) SMTG_OVERRIDE;
 		Steinberg::tresult PLUGIN_API setState(Steinberg::IBStream *state) SMTG_OVERRIDE;
 		Steinberg::tresult PLUGIN_API getState(Steinberg::IBStream *state) SMTG_OVERRIDE;
@@ -44,6 +60,15 @@ namespace Newkon
 																												Steinberg::Vst::TChar *string,
 																												Steinberg::Vst::ParamValue &valueNormalized) SMTG_OVERRIDE;
 
+		// IControlListener
+		void valueChanged(VSTGUI::CControl *pControl) SMTG_OVERRIDE;
+
+		/** Update UI based on processor state */
+		void updateUIState();
+
+		/** Get the processor instance */
+		HardwareSynthProcessor *getProcessor();
+
 		//---Interface---------
 		DEFINE_INTERFACES
 		// Here you can add more supported VST3 interfaces
@@ -53,7 +78,13 @@ namespace Newkon
 
 		//------------------------------------------------------------------------
 	private:
+		void createDeviceButtons();
+
+		//------------------------------------------------------------------------
+	private:
 		VSTGUI::VST3Editor *editor = nullptr;
+		std::vector<std::string> midiDevices;
+		VSTGUI::CScrollView *scrollView = nullptr;
 	};
 
 	//------------------------------------------------------------------------
