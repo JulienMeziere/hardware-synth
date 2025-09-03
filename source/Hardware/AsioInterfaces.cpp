@@ -9,6 +9,9 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <atomic>
+#include <xmmintrin.h>
+#include <immintrin.h>
 
 // ASIO SDK includes
 #include "asiosys.h"
@@ -36,11 +39,12 @@ namespace Newkon
   static long g_minSize = 0, g_maxSize = 0, g_preferredSize = 0, g_granularity = 0;
   static ASIOSampleRate g_sampleRate = 0.0;
 
-  // ring buffer (stereo interleaved)
+  // ring buffer (mono frames)
   alignas(32) static float *g_audioBuffer = nullptr; // aligned allocation below
-  static int g_bufferSize = 0;
-  static int g_bufferPos = 0;
-  static int g_readPos = 0;
+  static int g_bufferSize = 0;                       // power-of-two size in frames
+  static int g_bufferMask = 0;                       // g_bufferSize - 1
+  static std::atomic<int> g_bufferPos{0};            // writer index (frames)
+  static int g_readPos = 0;                          // reader index (frames)
 
   // Precomputed converters per input channel (we use mono = first channel)
   typedef float (*SampleConverter)(const void *src, long index);
@@ -107,6 +111,16 @@ namespace Newkon
     if (!g_bufferInfos || !g_channelInfos || g_preferredSize <= 0)
       return;
 
+    // Set FTZ/DAZ once on this thread to avoid denormal stalls
+    static thread_local bool s_mxcsrInitialized = false;
+    if (!s_mxcsrInitialized)
+    {
+      unsigned int csr = _mm_getcsr();
+      csr |= 0x8040; // FTZ (bit 15) | DAZ (bit 6)
+      _mm_setcsr(csr);
+      s_mxcsrInitialized = true;
+    }
+
     // Always treat as mono source and write mono frames
     const int channelsToUse = 1;
     const int writeBlock = static_cast<int>(g_preferredSize);
@@ -115,69 +129,120 @@ namespace Newkon
       // Mono: convert first input channel only via precomputed converter
       const void *src0 = g_bufferInfos[0].buffers[index];
 
-      long framesToWrite = g_preferredSize;
-      // First contiguous run until end of ring (mono frames)
-      long contFrames = g_bufferSize - g_bufferPos;
-      long f1 = framesToWrite < contFrames ? framesToWrite : contFrames;
+      int wpos = g_bufferPos.load(std::memory_order_relaxed);
+      int framesToWrite = static_cast<int>(g_preferredSize);
+      int contFrames = g_bufferSize - wpos;
+      int f1 = framesToWrite < contFrames ? framesToWrite : contFrames;
 
       if (g_kind[0] == kKindFloat32)
       {
         const float *pf = static_cast<const float *>(src0);
-        for (long i = 0; i < f1; i++)
-          g_audioBuffer[g_bufferPos++] = pf[i];
+        std::memcpy(&g_audioBuffer[wpos], pf, sizeof(float) * f1);
+        wpos += f1;
+        if (wpos == g_bufferSize)
+          wpos = 0;
+        framesToWrite -= f1;
+        if (framesToWrite > 0)
+        {
+          std::memcpy(&g_audioBuffer[0], pf + f1, sizeof(float) * framesToWrite);
+          wpos = framesToWrite;
+        }
       }
       else if (g_kind[0] == kKindInt16)
       {
         const int16_t *ps = static_cast<const int16_t *>(src0);
         const float s = g_scale[0];
-        for (long i = 0; i < f1; i++)
-          g_audioBuffer[g_bufferPos++] = ps[i] * s;
+        int i = 0;
+        int n = f1 & ~15; // 16 samples per iter
+        const __m256 scale = _mm256_set1_ps(s);
+        for (; i < n; i += 16)
+        {
+          __m128i v16a = _mm_loadu_si128((const __m128i *)(ps + i));
+          __m128i v16b = _mm_loadu_si128((const __m128i *)(ps + i + 8));
+          __m256i v32a = _mm256_cvtepi16_epi32(v16a);
+          __m256i v32b = _mm256_cvtepi16_epi32(v16b);
+          __m256 fa = _mm256_mul_ps(_mm256_cvtepi32_ps(v32a), scale);
+          __m256 fb = _mm256_mul_ps(_mm256_cvtepi32_ps(v32b), scale);
+          _mm256_storeu_ps(g_audioBuffer + wpos + i, fa);
+          _mm256_storeu_ps(g_audioBuffer + wpos + i + 8, fb);
+        }
+        for (; i < f1; i++)
+          g_audioBuffer[wpos + i] = ps[i] * s;
+        wpos += f1;
+        if (wpos == g_bufferSize)
+          wpos = 0;
+        framesToWrite -= f1;
+        if (framesToWrite > 0)
+        {
+          int j = 0;
+          int m = framesToWrite & ~15;
+          for (; j < m; j += 16)
+          {
+            __m128i v16a = _mm_loadu_si128((const __m128i *)(ps + f1 + j));
+            __m128i v16b = _mm_loadu_si128((const __m128i *)(ps + f1 + j + 8));
+            __m256i v32a = _mm256_cvtepi16_epi32(v16a);
+            __m256i v32b = _mm256_cvtepi16_epi32(v16b);
+            __m256 fa = _mm256_mul_ps(_mm256_cvtepi32_ps(v32a), scale);
+            __m256 fb = _mm256_mul_ps(_mm256_cvtepi32_ps(v32b), scale);
+            _mm256_storeu_ps(g_audioBuffer + j, fa);
+            _mm256_storeu_ps(g_audioBuffer + j + 8, fb);
+          }
+          for (; j < framesToWrite; j++)
+            g_audioBuffer[j] = ps[f1 + j] * s;
+          wpos = framesToWrite;
+        }
       }
       else if (g_kind[0] == kKindInt32 || g_kind[0] == kKindInt32LSB24)
       {
         const int32_t *pi = static_cast<const int32_t *>(src0);
         const float s = g_scale[0];
-        for (long i = 0; i < f1; i++)
-          g_audioBuffer[g_bufferPos++] = pi[i] * s;
+        int i = 0;
+        int n = f1 & ~7; // 8 samples per iter
+        const __m256 scale = _mm256_set1_ps(s);
+        for (; i < n; i += 8)
+        {
+          __m256i v = _mm256_loadu_si256((const __m256i *)(pi + i));
+          __m256 f = _mm256_mul_ps(_mm256_cvtepi32_ps(v), scale);
+          _mm256_storeu_ps(g_audioBuffer + wpos + i, f);
+        }
+        for (; i < f1; i++)
+          g_audioBuffer[wpos + i] = pi[i] * s;
+        wpos += f1;
+        if (wpos == g_bufferSize)
+          wpos = 0;
+        framesToWrite -= f1;
+        if (framesToWrite > 0)
+        {
+          int j = 0;
+          int m = framesToWrite & ~7;
+          for (; j < m; j += 8)
+          {
+            __m256i v = _mm256_loadu_si256((const __m256i *)(pi + f1 + j));
+            __m256 f = _mm256_mul_ps(_mm256_cvtepi32_ps(v), scale);
+            _mm256_storeu_ps(g_audioBuffer + j, f);
+          }
+          for (; j < framesToWrite; j++)
+            g_audioBuffer[j] = pi[f1 + j] * s;
+          wpos = framesToWrite;
+        }
       }
       else
       {
-        for (long i = 0; i < f1; i++)
-          g_audioBuffer[g_bufferPos++] = g_convertSample[0] ? g_convertSample[0](src0, i) : 0.0f;
+        for (int i = 0; i < f1; i++)
+          g_audioBuffer[wpos + i] = g_convertSample[0] ? g_convertSample[0](src0, i) : 0.0f;
+        wpos += f1;
+        if (wpos == g_bufferSize)
+          wpos = 0;
+        framesToWrite -= f1;
+        if (framesToWrite > 0)
+        {
+          for (int i = 0; i < framesToWrite; i++)
+            g_audioBuffer[i] = g_convertSample[0] ? g_convertSample[0](src0, f1 + i) : 0.0f;
+          wpos = framesToWrite;
+        }
       }
 
-      framesToWrite -= f1;
-      if (framesToWrite > 0)
-      {
-        // Wrap
-        g_bufferPos = 0;
-        long base = f1;
-        if (g_kind[0] == kKindFloat32)
-        {
-          const float *pf = static_cast<const float *>(src0);
-          for (long i = 0; i < framesToWrite; i++)
-            g_audioBuffer[g_bufferPos++] = pf[base + i];
-        }
-        else if (g_kind[0] == kKindInt16)
-        {
-          const int16_t *ps = static_cast<const int16_t *>(src0);
-          const float s = g_scale[0];
-          for (long i = 0; i < framesToWrite; i++)
-            g_audioBuffer[g_bufferPos++] = ps[base + i] * s;
-        }
-        else if (g_kind[0] == kKindInt32 || g_kind[0] == kKindInt32LSB24)
-        {
-          const int32_t *pi = static_cast<const int32_t *>(src0);
-          const float s = g_scale[0];
-          for (long i = 0; i < framesToWrite; i++)
-            g_audioBuffer[g_bufferPos++] = pi[base + i] * s;
-        }
-        else
-        {
-          for (long i = 0; i < framesToWrite; i++)
-            g_audioBuffer[g_bufferPos++] = g_convertSample[0] ? g_convertSample[0](src0, base + i) : 0.0f;
-        }
-      }
+      g_bufferPos.store(wpos, std::memory_order_release);
     }
   }
 
@@ -385,47 +450,69 @@ namespace Newkon
       {
       case ASIOSTFloat32LSB:
         g_convertSample[i] = convFloat32;
+        g_kind[i] = kKindFloat32;
+        g_scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB:
         g_convertSample[i] = convInt32;
+        g_kind[i] = kKindInt32;
+        g_scale[i] = (1.0f / 2147483648.0f);
         break;
       case ASIOSTInt32LSB24:
         g_convertSample[i] = convInt32LSB24;
+        g_kind[i] = kKindInt32LSB24;
+        g_scale[i] = (1.0f / 8388608.0f);
         break;
       case ASIOSTInt32LSB20:
         g_convertSample[i] = convInt32LSB20;
+        g_kind[i] = kKindUnknown;
+        g_scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB18:
         g_convertSample[i] = convInt32LSB18;
+        g_kind[i] = kKindUnknown;
+        g_scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB16:
         g_convertSample[i] = convInt32LSB16;
+        g_kind[i] = kKindUnknown;
+        g_scale[i] = 1.0f;
         break;
       case ASIOSTInt24LSB:
         g_convertSample[i] = convInt24;
+        g_kind[i] = kKindUnknown;
+        g_scale[i] = 1.0f;
         break;
       case ASIOSTInt16LSB:
         g_convertSample[i] = convInt16;
+        g_kind[i] = kKindInt16;
+        g_scale[i] = (1.0f / 32768.0f);
         break;
       default:
         g_convertSample[i] = nullptr;
+        g_kind[i] = kKindUnknown;
+        g_scale[i] = 1.0f;
         break;
       }
     }
 
     if (g_audioBuffer)
     {
-      delete[] g_audioBuffer;
+      _aligned_free(g_audioBuffer);
       g_audioBuffer = nullptr;
     }
-    // ring buffer length: 100 ms mono or 8 blocks, whichever is larger
+    // ring buffer length: 100 ms mono or 8 blocks, whichever is larger, rounded to power of two
     const int minFrames100ms = (g_sampleRate > 0 ? static_cast<int>(g_sampleRate * 0.1) : g_preferredSize * 8);
     const int minFrames = (minFrames100ms > (g_preferredSize * 8) ? minFrames100ms : (g_preferredSize * 8));
-    g_bufferSize = minFrames; // mono frames
+    int pow2 = 1;
+    while (pow2 < minFrames)
+      pow2 <<= 1;
+    g_bufferSize = pow2; // mono frames
+    g_bufferMask = g_bufferSize - 1;
     // 32-byte aligned alloc for better vectorization
     g_audioBuffer = static_cast<float *>(_aligned_malloc(sizeof(float) * g_bufferSize, 32));
     std::memset(g_audioBuffer, 0, sizeof(float) * g_bufferSize);
-    g_bufferPos = 0;
+    g_bufferPos.store(0, std::memory_order_relaxed);
 
     if (ASIOStart() != ASE_OK)
       return false;
@@ -456,11 +543,44 @@ namespace Newkon
       g_audioBuffer = nullptr;
     }
     g_bufferSize = 0;
-    g_bufferPos = 0;
+    g_bufferMask = 0;
+    g_bufferPos.store(0, std::memory_order_relaxed);
     isStreaming = false;
   }
 
-  bool AsioInterfaces::getAudioData(float *outputBuffer, int numSamples, int numChannels)
+  void AsioInterfaces::shutdown()
+  {
+    // Ensure streaming is stopped and buffers are freed
+    if (isStreaming)
+      stopAudioStream();
+
+    if (g_bufferInfos)
+    {
+      delete[] g_bufferInfos;
+      g_bufferInfos = nullptr;
+    }
+    if (g_channelInfos)
+    {
+      delete[] g_channelInfos;
+      g_channelInfos = nullptr;
+    }
+    if (g_audioBuffer)
+    {
+      _aligned_free(g_audioBuffer);
+      g_audioBuffer = nullptr;
+    }
+    g_bufferSize = 0;
+    g_bufferMask = 0;
+    g_bufferPos.store(0, std::memory_order_relaxed);
+
+    // Tell driver we are done
+    ASIODisposeBuffers();
+    ASIOExit();
+    currentInterfaceIndex = -1;
+    currentInputIndex = -1;
+  }
+
+  bool AsioInterfaces::getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels)
   {
     if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0 || !g_audioBuffer)
     {
@@ -480,21 +600,20 @@ namespace Newkon
       int safety = g_preferredSize * 2 * 4; // frames * stereo * blocks
       if (safety > g_bufferSize / 2)
         safety = g_bufferSize / 2;
-      g_readPos = (g_bufferPos - safety + g_bufferSize) % g_bufferSize;
+      int wpos = g_bufferPos.load(std::memory_order_acquire);
+      g_readPos = (wpos - safety) & g_bufferMask;
     }
 
     for (int i = 0; i < total; i++)
     {
       outputBuffer[i] = g_audioBuffer[g_readPos];
-      g_readPos++;
-      if (g_readPos >= g_bufferSize)
-        g_readPos = 0;
+      g_readPos = (g_readPos + 1) & g_bufferMask;
     }
 
     return true;
   }
 
-  bool AsioInterfaces::getAudioDataStereo(float *outL, float *outR, int numSamples)
+  bool AsioInterfaces::getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples)
   {
     if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0 || !g_audioBuffer || !outL || !outR)
       return false;
@@ -508,7 +627,8 @@ namespace Newkon
       int safety = g_preferredSize * 4; // frames*blocks
       if (safety > g_bufferSize / 2)
         safety = g_bufferSize / 2;
-      g_readPos = (g_bufferPos - safety + g_bufferSize) % g_bufferSize;
+      int wpos = g_bufferPos.load(std::memory_order_acquire);
+      g_readPos = (wpos - safety) & g_bufferMask;
     }
 
     // Ring is mono frames; duplicate to L/R with contiguous fast path

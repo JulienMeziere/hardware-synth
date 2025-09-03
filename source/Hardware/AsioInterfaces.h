@@ -34,11 +34,14 @@ namespace Newkon
     // Stop audio streaming
     static void stopAudioStream();
 
+    // Properly shutdown ASIO driver and clear state
+    static void shutdown();
+
     // Get audio data from the connected input (called by VST process)
-    static bool getAudioData(float *outputBuffer, int numSamples, int numChannels);
+    static bool getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels);
 
     // Get audio data directly into separate L/R buffers (stereo)
-    static bool getAudioDataStereo(float *outL, float *outR, int numSamples);
+    static bool getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples);
 
     // Get the stored ASIO interfaces
     static const std::vector<AsioInterfaceInfo> &getAsioDevices();

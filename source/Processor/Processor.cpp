@@ -71,6 +71,9 @@ namespace Newkon
 	{
 		// Here the Plug-in will be de-instantiated, last possibility to remove some memory!
 
+		// Ensure ASIO is properly shutdown
+		Newkon::AsioInterfaces::shutdown();
+
 		//---do not forget to call parent ------
 		return AudioEffect::terminate();
 	}
@@ -79,6 +82,10 @@ namespace Newkon
 	tresult PLUGIN_API HardwareSynthProcessor::setActive(TBool state)
 	{
 		//--- called when the Plug-in is enable/disable (On/Off) -----
+		if (!state)
+		{
+			Newkon::AsioInterfaces::stopAudioStream();
+		}
 		return AudioEffect::setActive(state);
 	}
 
@@ -156,17 +163,14 @@ namespace Newkon
 		//--- Audio processing: Forward ASIO input to DAW output
 		if (data.numSamples > 0 && data.outputs && data.outputs[0].numChannels >= 2)
 		{
-			Vst::Sample32 *outL = data.outputs[0].channelBuffers32[0];
-			Vst::Sample32 *outR = data.outputs[0].channelBuffers32[1];
+			Vst::Sample32 *__restrict outL = data.outputs[0].channelBuffers32[0];
+			Vst::Sample32 *__restrict outR = data.outputs[0].channelBuffers32[1];
 
 			// Pull audio directly into output buffers (no intermediate alloc)
 			if (!AsioInterfaces::getAudioDataStereo(outL, outR, data.numSamples))
 			{
-				for (int32 i = 0; i < data.numSamples; i++)
-				{
-					outL[i] = 0.0f;
-					outR[i] = 0.0f;
-				}
+				std::memset(outL, 0, sizeof(float) * data.numSamples);
+				std::memset(outR, 0, sizeof(float) * data.numSamples);
 			}
 		}
 
