@@ -767,7 +767,6 @@ namespace Newkon
 
   bool AsioInterface::getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples)
   {
-    // no reset barrier
     if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0 || !outL || !outR)
       return false;
 
