@@ -49,6 +49,43 @@ namespace Newkon
     }
   }
 
+  void RingBufferFloat::resize(uint32_t capacityPow2)
+  {
+    uint32_t newCap = roundUpPow2(capacityPow2);
+    if (newCap == 0)
+      newCap = 1;
+
+    // Allocate new block first
+    float *newData = nullptr;
+#if defined(_MSC_VER)
+    newData = static_cast<float *>(_aligned_malloc(sizeof(float) * newCap, 32));
+#else
+    if (posix_memalign(reinterpret_cast<void **>(&newData), 32, sizeof(float) * newCap) != 0)
+      newData = nullptr;
+#endif
+    if (!newData)
+      return; // keep existing buffer if allocation fails
+
+    std::memset(newData, 0, sizeof(float) * newCap);
+
+    // Free old storage
+    if (data_)
+    {
+#if defined(_MSC_VER)
+      _aligned_free(data_);
+#else
+      free(data_);
+#endif
+    }
+
+    // Swap in new
+    data_ = newData;
+    cap_ = newCap;
+    mask_ = cap_ - 1;
+    writePos_.store(0, std::memory_order_relaxed);
+    readPos_.store(0, std::memory_order_relaxed);
+  }
+
   void RingBufferFloat::clear()
   {
     if (data_)

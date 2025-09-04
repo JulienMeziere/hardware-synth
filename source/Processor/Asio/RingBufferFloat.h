@@ -11,6 +11,7 @@ namespace Newkon
     explicit RingBufferFloat(uint32_t capacityPow2);
     ~RingBufferFloat();
 
+    void resize(uint32_t capacityPow2);
     uint32_t capacity() const { return cap_; }
     uint32_t mask() const { return mask_; }
 

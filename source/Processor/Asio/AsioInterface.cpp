@@ -25,24 +25,41 @@ extern bool loadAsioDriver(char *name);
 
 namespace Newkon
 {
-  // ASIO driver state
-  static ASIODriverInfo g_driverInfo = {};
-  static ASIOCallbacks g_callbacks = {};
-  static ASIOBufferInfo *g_bufferInfos = nullptr;
-  static ASIOChannelInfo *g_channelInfos = nullptr;
-  static long g_inputChannels = 0;
-  static long g_minSize = 0, g_maxSize = 0, g_preferredSize = 0, g_granularity = 0;
-  static ASIOSampleRate g_sampleRate = 0.0;
+  struct AsioState
+  {
+    ASIODriverInfo driverInfo{};
+    ASIOCallbacks callbacks{};
+    ASIOBufferInfo *bufferInfos = nullptr;
+    ASIOChannelInfo *channelInfos = nullptr;
+    long inputChannels = 0;
+    long minSize = 0;
+    long maxSize = 0;
+    long preferredSize = 0;
+    long granularity = 0;
+    ASIOSampleRate sampleRate = 0.0;
+    int bufferPos = 0;
+    int readPos = 0;
+    volatile bool resetRequested = false;
+    volatile bool callbacksEnabled = false;
+    volatile int inCallback = 0;
+    volatile bool resetInProgress = false;
+    int selectedInputIndex = -1;
+    // converters (mono path uses index 0)
+    typedef float (*SampleConverter)(const void *src, long index);
+    SampleConverter convertSample[2] = {nullptr, nullptr};
+    enum SampleKind
+    {
+      kKindUnknown = 0,
+      kKindFloat32,
+      kKindInt16,
+      kKindInt32,
+      kKindInt32LSB24
+    };
+    SampleKind kind[2] = {kKindUnknown, kKindUnknown};
+    float scale[2] = {1.0f, 1.0f};
+  };
 
-  // ring buffer (mono frames)
-  static RingBufferFloat *s_ring = nullptr;
-  static int g_bufferPos = 0; // writer index (frames)
-  static int g_readPos = 0;   // reader index (frames)
-
-  static volatile bool s_resetRequested = false;
-  static volatile bool s_callbacksEnabled = false;
-  static volatile int s_inCallback = 0;
-  static volatile bool s_resetInProgress = false;
+  AsioInterface *AsioInterface::s_current = nullptr;
 
   static const char *asioErrStr(ASIOError e)
   {
@@ -71,19 +88,7 @@ namespace Newkon
     }
   }
 
-  // Precomputed converters per input channel (we use mono = first channel)
-  typedef float (*SampleConverter)(const void *src, long index);
-  static SampleConverter g_convertSample[2] = {nullptr, nullptr};
-  enum SampleKind
-  {
-    kKindUnknown = 0,
-    kKindFloat32,
-    kKindInt16,
-    kKindInt32,
-    kKindInt32LSB24
-  };
-  static SampleKind g_kind[2] = {kKindUnknown, kKindUnknown};
-  static float g_scale[2] = {1.0f, 1.0f};
+  // Converters (implementations remain file-local)
 
   static float convFloat32(const void *src, long index)
   {
@@ -129,23 +134,25 @@ namespace Newkon
     const int16_t *ps = static_cast<const int16_t *>(src);
     return ps[index] * (1.0f / 32768.0f);
   }
-  static int s_selectedInputIndex = -1;
-
-  static void bufferSwitch(long index, ASIOBool /*processNow*/)
+  void AsioInterface::bufferSwitchThunk(long index, ASIOBool /*processNow*/)
   {
-    if (!s_callbacksEnabled)
+    AsioInterface *self = AsioInterface::s_current;
+    if (!self || !self->state)
       return;
-    if (s_resetInProgress)
+    AsioState *st = self->state;
+    if (!st->callbacksEnabled)
       return;
-    ++s_inCallback;
-    if (!g_bufferInfos || !g_channelInfos || g_preferredSize <= 0 || !s_ring)
+    if (st->resetInProgress)
+      return;
+    ++st->inCallback;
+    if (!st->bufferInfos || !st->channelInfos || st->preferredSize <= 0)
     {
-      --s_inCallback;
+      --st->inCallback;
       return;
     }
     if (index != 0 && index != 1)
     {
-      --s_inCallback;
+      --st->inCallback;
       return;
     }
 
@@ -161,20 +168,20 @@ namespace Newkon
 
     // Always treat as mono source and write mono frames
     const int channelsToUse = 1;
-    const int writeBlock = static_cast<int>(g_preferredSize);
+    const int writeBlock = static_cast<int>(st->preferredSize);
 
     {
       // Mono: convert first input channel only via precomputed converter
-      const void *src0 = g_bufferInfos[0].buffers[index];
+      const void *src0 = st->bufferInfos[0].buffers[index];
       if (!src0)
       {
-        --s_inCallback;
+        --st->inCallback;
         return;
       }
 
-      int wpos = g_bufferPos;
-      int framesToWrite = static_cast<int>(g_preferredSize);
-      const int cap = static_cast<int>(s_ring ? s_ring->capacity() : 0);
+      int wpos = st->bufferPos;
+      int framesToWrite = static_cast<int>(st->preferredSize);
+      const int cap = static_cast<int>(self->ringBuffer.capacity());
       if (wpos < 0 || wpos >= cap)
         wpos = 0;
       if (framesToWrite > cap)
@@ -184,24 +191,24 @@ namespace Newkon
         contFrames = 0;
       int f1 = framesToWrite < contFrames ? framesToWrite : contFrames;
 
-      if (g_kind[0] == kKindFloat32)
+      if (st->kind[0] == AsioState::kKindFloat32)
       {
         const float *pf = static_cast<const float *>(src0);
-        std::memcpy(s_ring->data() + wpos, pf, sizeof(float) * f1);
+        std::memcpy(self->ringBuffer.data() + wpos, pf, sizeof(float) * f1);
         wpos += f1;
-        if (wpos == (int)s_ring->capacity())
+        if (wpos == (int)self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
         {
-          std::memcpy(s_ring->data(), pf + f1, sizeof(float) * framesToWrite);
+          std::memcpy(self->ringBuffer.data(), pf + f1, sizeof(float) * framesToWrite);
           wpos = framesToWrite;
         }
       }
-      else if (g_kind[0] == kKindInt16)
+      else if (st->kind[0] == AsioState::kKindInt16)
       {
         const int16_t *ps = static_cast<const int16_t *>(src0);
-        const float s = g_scale[0];
+        const float s = st->scale[0];
         int i = 0;
         int n = f1 & ~15; // 16 samples per iter
         const __m256 scale = _mm256_set1_ps(s);
@@ -213,13 +220,13 @@ namespace Newkon
           __m256i v32b = _mm256_cvtepi16_epi32(v16b);
           __m256 fa = _mm256_mul_ps(_mm256_cvtepi32_ps(v32a), scale);
           __m256 fb = _mm256_mul_ps(_mm256_cvtepi32_ps(v32b), scale);
-          _mm256_storeu_ps(s_ring->data() + wpos + i, fa);
-          _mm256_storeu_ps(s_ring->data() + wpos + i + 8, fb);
+          _mm256_storeu_ps(self->ringBuffer.data() + wpos + i, fa);
+          _mm256_storeu_ps(self->ringBuffer.data() + wpos + i + 8, fb);
         }
         for (; i < f1; i++)
-          s_ring->data()[wpos + i] = ps[i] * s;
+          self->ringBuffer.data()[wpos + i] = ps[i] * s;
         wpos += f1;
-        if (wpos == (int)s_ring->capacity())
+        if (wpos == (int)self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
@@ -234,18 +241,18 @@ namespace Newkon
             __m256i v32b = _mm256_cvtepi16_epi32(v16b);
             __m256 fa = _mm256_mul_ps(_mm256_cvtepi32_ps(v32a), scale);
             __m256 fb = _mm256_mul_ps(_mm256_cvtepi32_ps(v32b), scale);
-            _mm256_storeu_ps(s_ring->data() + j, fa);
-            _mm256_storeu_ps(s_ring->data() + j + 8, fb);
+            _mm256_storeu_ps(self->ringBuffer.data() + j, fa);
+            _mm256_storeu_ps(self->ringBuffer.data() + j + 8, fb);
           }
           for (; j < framesToWrite; j++)
-            s_ring->data()[j] = ps[f1 + j] * s;
+            self->ringBuffer.data()[j] = ps[f1 + j] * s;
           wpos = framesToWrite;
         }
       }
-      else if (g_kind[0] == kKindInt32 || g_kind[0] == kKindInt32LSB24)
+      else if (st->kind[0] == AsioState::kKindInt32 || st->kind[0] == AsioState::kKindInt32LSB24)
       {
         const int32_t *pi = static_cast<const int32_t *>(src0);
-        const float s = g_scale[0];
+        const float s = st->scale[0];
         int i = 0;
         int n = f1 & ~7; // 8 samples per iter
         const __m256 scale = _mm256_set1_ps(s);
@@ -253,12 +260,12 @@ namespace Newkon
         {
           __m256i v = _mm256_loadu_si256((const __m256i *)(pi + i));
           __m256 f = _mm256_mul_ps(_mm256_cvtepi32_ps(v), scale);
-          _mm256_storeu_ps(s_ring->data() + wpos + i, f);
+          _mm256_storeu_ps(self->ringBuffer.data() + wpos + i, f);
         }
         for (; i < f1; i++)
-          s_ring->data()[wpos + i] = pi[i] * s;
+          self->ringBuffer.data()[wpos + i] = pi[i] * s;
         wpos += f1;
-        if (wpos == (int)s_ring->capacity())
+        if (wpos == (int)self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
@@ -269,47 +276,54 @@ namespace Newkon
           {
             __m256i v = _mm256_loadu_si256((const __m256i *)(pi + f1 + j));
             __m256 f = _mm256_mul_ps(_mm256_cvtepi32_ps(v), scale);
-            _mm256_storeu_ps(s_ring->data() + j, f);
+            _mm256_storeu_ps(self->ringBuffer.data() + j, f);
           }
           for (; j < framesToWrite; j++)
-            s_ring->data()[j] = pi[f1 + j] * s;
+            self->ringBuffer.data()[j] = pi[f1 + j] * s;
           wpos = framesToWrite;
         }
       }
       else
       {
         for (int i = 0; i < f1; i++)
-          s_ring->data()[wpos + i] = g_convertSample[0] ? g_convertSample[0](src0, i) : 0.0f;
+          self->ringBuffer.data()[wpos + i] = st->convertSample[0] ? st->convertSample[0](src0, i) : 0.0f;
         wpos += f1;
-        if (wpos == (int)s_ring->capacity())
+        if (wpos == (int)self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
         {
           for (int i = 0; i < framesToWrite; i++)
-            s_ring->data()[i] = g_convertSample[0] ? g_convertSample[0](src0, f1 + i) : 0.0f;
+            self->ringBuffer.data()[i] = st->convertSample[0] ? st->convertSample[0](src0, f1 + i) : 0.0f;
           wpos = framesToWrite;
         }
       }
 
-      g_bufferPos = wpos;
+      st->bufferPos = wpos;
     }
-    --s_inCallback;
+    --st->inCallback;
   }
 
-  static ASIOTime *bufferSwitchTimeInfo(ASIOTime *timeInfo, long index, ASIOBool processNow)
+  ASIOTime *AsioInterface::bufferSwitchTimeInfoThunk(ASIOTime *timeInfo, long index, ASIOBool processNow)
   {
-    bufferSwitch(index, processNow);
+    AsioInterface::bufferSwitchThunk(index, processNow);
     return timeInfo;
   }
 
-  static void sampleRateDidChange(ASIOSampleRate sRate)
+  void AsioInterface::sampleRateDidChangeThunk(ASIOSampleRate sRate)
   {
-    g_sampleRate = sRate;
+    AsioInterface *self = AsioInterface::s_current;
+    if (!self || !self->state)
+      return;
+    self->state->sampleRate = sRate;
   }
 
-  static long asioMessage(long selector, long value, void *message, double *opt)
+  long AsioInterface::asioMessageThunk(long selector, long value, void *message, double *opt)
   {
+    AsioInterface *self = AsioInterface::s_current;
+    if (!self || !self->state)
+      return 0;
+    AsioState *st = self->state;
     switch (selector)
     {
     case kAsioSelectorSupported:
@@ -317,20 +331,20 @@ namespace Newkon
     case kAsioEngineVersion:
       return 2;
     case kAsioResetRequest:
-      s_resetRequested = true;
-      s_resetInProgress = true;
+      st->resetRequested = true;
+      st->resetInProgress = true;
       Logger::getInstance() << "ASIO reset requested by driver" << std::endl;
       return 1;
     case kAsioResyncRequest:
       // Latency or buffer size may have changed; handle like reset
-      s_resetRequested = true;
-      s_resetInProgress = true;
+      st->resetRequested = true;
+      st->resetInProgress = true;
       Logger::getInstance() << "ASIO resync requested by driver" << std::endl;
       return 1;
     case kAsioLatenciesChanged:
       // Not all drivers use ResetRequest; be safe and rebuild buffers
-      s_resetRequested = true;
-      s_resetInProgress = true;
+      st->resetRequested = true;
+      st->resetInProgress = true;
       Logger::getInstance() << "ASIO latencies changed" << std::endl;
       return 1;
     default:
@@ -338,27 +352,34 @@ namespace Newkon
     }
   }
 
-  AsioInterface::AsioInterface() : currentInterfaceIndex(-1), currentInputIndex(-1), isStreaming(false) {}
+  AsioInterface::AsioInterface() : currentInterfaceIndex(-1), currentInputIndex(-1), isStreaming(false), ringBuffer(1)
+  {
+    state = new AsioState();
+  }
 
   AsioInterface::~AsioInterface()
   {
     shutdown();
+    delete state;
+    state = nullptr;
+    if (AsioInterface::s_current == this)
+      AsioInterface::s_current = nullptr;
   }
 
   void AsioInterface::handlePendingReset()
   {
-    if (!s_resetRequested)
+    if (!state->resetRequested)
       return;
-    s_resetRequested = false;
+    state->resetRequested = false;
 
     if (currentInterfaceIndex < 0 || currentInputIndex < 0)
       return;
 
     // Mark reset in progress to make all readers/writers no-op
-    s_resetInProgress = true;
+    state->resetInProgress = true;
 
     // ASIO-recommended reset: do not unload/reload driver; just rebuild buffers
-    const long oldPreferred = g_preferredSize;
+    const long oldPreferred = state->preferredSize;
     stopAudioStream();
     Sleep(10);
 
@@ -369,15 +390,15 @@ namespace Newkon
       Logger::getInstance() << "ASIOGetBufferSize after reset failed: " << asioErrStr(bsRc) << std::endl;
       return;
     }
-    g_minSize = minS;
-    g_maxSize = maxS;
-    g_preferredSize = prefS;
-    g_granularity = gran;
+    state->minSize = minS;
+    state->maxSize = maxS;
+    state->preferredSize = prefS;
+    state->granularity = gran;
 
     ASIOSampleRate sr = 0.0;
     ASIOError srRc = ASIOGetSampleRate(&sr);
     if (srRc == ASE_OK)
-      g_sampleRate = sr;
+      state->sampleRate = sr;
 
     // Recreate buffers and restart. Retry a few times if start fails.
     bool started = false;
@@ -396,13 +417,13 @@ namespace Newkon
       // keep s_resetInProgress true so readers stay silent
       return;
     }
-    if (g_preferredSize != oldPreferred)
+    if (state->preferredSize != oldPreferred)
     {
-      Logger::getInstance() << "ASIO buffer size changed: " << oldPreferred << " -> " << g_preferredSize << std::endl;
+      Logger::getInstance() << "ASIO buffer size changed: " << oldPreferred << " -> " << state->preferredSize << std::endl;
     }
 
     // Reset completed; allow readers/writers to resume
-    s_resetInProgress = false;
+    state->resetInProgress = false;
   }
 
   std::vector<std::string> AsioInterface::listAsioInterfaces()
@@ -468,42 +489,42 @@ namespace Newkon
       return false;
     }
 
-    std::memset(&g_driverInfo, 0, sizeof(g_driverInfo));
-    g_driverInfo.sysRef = (void *)GetDesktopWindow();
-    ASIOError initRc = ASIOInit(&g_driverInfo);
+    std::memset(&state->driverInfo, 0, sizeof(state->driverInfo));
+    state->driverInfo.sysRef = (void *)GetDesktopWindow();
+    ASIOError initRc = ASIOInit(&state->driverInfo);
     if (initRc != ASE_OK)
     {
       Logger::getInstance() << "ASIOInit failed: " << asioErrStr(initRc)
-                            << ", msg='" << (g_driverInfo.errorMessage ? g_driverInfo.errorMessage : "") << "'" << std::endl;
+                            << ", msg='" << (state->driverInfo.errorMessage ? state->driverInfo.errorMessage : "") << "'" << std::endl;
       ASIOExit();
       currentInterfaceIndex = -1;
       return false;
     }
 
     long dummyOutputs = 0;
-    ASIOError chRc = ASIOGetChannels(&g_inputChannels, &dummyOutputs);
+    ASIOError chRc = ASIOGetChannels(&state->inputChannels, &dummyOutputs);
     if (chRc != ASE_OK)
     {
       Logger::getInstance() << "ASIOGetChannels failed: " << asioErrStr(chRc) << std::endl;
       return false;
     }
-    ASIOError bsRc = ASIOGetBufferSize(&g_minSize, &g_maxSize, &g_preferredSize, &g_granularity);
+    ASIOError bsRc = ASIOGetBufferSize(&state->minSize, &state->maxSize, &state->preferredSize, &state->granularity);
     if (bsRc != ASE_OK)
     {
       Logger::getInstance() << "ASIOGetBufferSize failed: " << asioErrStr(bsRc) << std::endl;
       return false;
     }
-    ASIOError srRc = ASIOGetSampleRate(&g_sampleRate);
+    ASIOError srRc = ASIOGetSampleRate(&state->sampleRate);
     if (srRc != ASE_OK)
     {
       Logger::getInstance() << "ASIOGetSampleRate failed: " << asioErrStr(srRc) << ", defaulting to 44100" << std::endl;
-      g_sampleRate = 44100.0;
+      state->sampleRate = 44100.0;
     }
 
     Logger::getInstance() << "ASIO interface connected: " << asioDevices[deviceIndex].name
-                          << ", inputs=" << g_inputChannels
-                          << ", preferredBuffer=" << g_preferredSize
-                          << ", sampleRate=" << g_sampleRate << std::endl;
+                          << ", inputs=" << state->inputChannels
+                          << ", preferredBuffer=" << state->preferredSize
+                          << ", sampleRate=" << state->sampleRate << std::endl;
 
     return true;
   }
@@ -523,8 +544,8 @@ namespace Newkon
         return inputs;
     }
 
-    inputs.reserve(static_cast<size_t>(g_inputChannels));
-    for (long i = 0; i < g_inputChannels; i++)
+    inputs.reserve(static_cast<size_t>(state->inputChannels));
+    for (long i = 0; i < state->inputChannels; i++)
     {
       ASIOChannelInfo ci = {};
       ci.channel = i;
@@ -561,7 +582,7 @@ namespace Newkon
       Logger::getInstance() << "ASIO input disconnect: index " << currentInputIndex << std::endl;
     }
     currentInputIndex = inputIndex;
-    s_selectedInputIndex = inputIndex;
+    state->selectedInputIndex = inputIndex;
     Logger::getInstance() << "ASIO input connect: index " << inputIndex << std::endl;
     return true;
   }
@@ -574,42 +595,44 @@ namespace Newkon
     }
 
     // Prevent readers while (re)creating buffers
-    s_resetInProgress = true;
+    state->resetInProgress = true;
 
     if (isStreaming)
     {
       stopAudioStream();
     }
 
-    long available2 = g_inputChannels - AsioInterface::currentInputIndex;
+    long available2 = state->inputChannels - AsioInterface::currentInputIndex;
     if (available2 < 0)
       available2 = 0;
     const int channelsToUse = static_cast<int>(available2 < 2 ? available2 : 2);
     if (channelsToUse <= 0)
       return false;
 
-    g_callbacks.bufferSwitch = bufferSwitch;
-    g_callbacks.bufferSwitchTimeInfo = bufferSwitchTimeInfo;
-    g_callbacks.asioMessage = asioMessage;
-    g_callbacks.sampleRateDidChange = sampleRateDidChange;
+    state->callbacks.bufferSwitch = &AsioInterface::bufferSwitchThunk;
+    state->callbacks.bufferSwitchTimeInfo = &AsioInterface::bufferSwitchTimeInfoThunk;
+    state->callbacks.asioMessage = &AsioInterface::asioMessageThunk;
+    state->callbacks.sampleRateDidChange = &AsioInterface::sampleRateDidChangeThunk;
 
-    if (g_bufferInfos)
+    if (state->bufferInfos)
     {
       ASIODisposeBuffers();
-      delete[] g_bufferInfos;
-      g_bufferInfos = nullptr;
+      delete[] state->bufferInfos;
+      state->bufferInfos = nullptr;
     }
 
-    g_bufferInfos = new ASIOBufferInfo[channelsToUse];
+    state->bufferInfos = new ASIOBufferInfo[channelsToUse];
     for (int i = 0; i < channelsToUse; i++)
     {
-      g_bufferInfos[i].isInput = ASIOTrue;
-      g_bufferInfos[i].channelNum = s_selectedInputIndex + i;
-      g_bufferInfos[i].buffers[0] = g_bufferInfos[i].buffers[1] = nullptr;
+      state->bufferInfos[i].isInput = ASIOTrue;
+      state->bufferInfos[i].channelNum = state->selectedInputIndex + i;
+      state->bufferInfos[i].buffers[0] = state->bufferInfos[i].buffers[1] = nullptr;
     }
 
     {
-      ASIOError cr = ASIOCreateBuffers(g_bufferInfos, channelsToUse, g_preferredSize, &g_callbacks);
+      // set current instance for callbacks before creating buffers
+      AsioInterface::s_current = this;
+      ASIOError cr = ASIOCreateBuffers(state->bufferInfos, channelsToUse, state->preferredSize, &state->callbacks);
       if (cr != ASE_OK)
       {
         Logger::getInstance() << "ASIOCreateBuffers failed: " << asioErrStr(cr) << std::endl;
@@ -617,97 +640,92 @@ namespace Newkon
       }
     }
 
-    if (g_channelInfos)
+    if (state->channelInfos)
     {
-      delete[] g_channelInfos;
-      g_channelInfos = nullptr;
+      delete[] state->channelInfos;
+      state->channelInfos = nullptr;
     }
-    g_channelInfos = new ASIOChannelInfo[channelsToUse];
+    state->channelInfos = new ASIOChannelInfo[channelsToUse];
     for (int i = 0; i < channelsToUse; i++)
     {
-      g_channelInfos[i].channel = s_selectedInputIndex + i;
-      g_channelInfos[i].isInput = ASIOTrue;
-      ASIOGetChannelInfo(&g_channelInfos[i]);
+      state->channelInfos[i].channel = state->selectedInputIndex + i;
+      state->channelInfos[i].isInput = ASIOTrue;
+      ASIOGetChannelInfo(&state->channelInfos[i]);
     }
 
     // Sanity check: preferred size should be > 0 and <= max
-    if (g_preferredSize <= 0 || (g_maxSize > 0 && g_preferredSize > g_maxSize))
+    if (state->preferredSize <= 0 || (state->maxSize > 0 && state->preferredSize > state->maxSize))
     {
-      Logger::getInstance() << "Invalid preferred buffer size: " << g_preferredSize << " (max=" << g_maxSize << ")" << std::endl;
+      Logger::getInstance() << "Invalid preferred buffer size: " << state->preferredSize << " (max=" << state->maxSize << ")" << std::endl;
       return false;
     }
 
     // Precompute converters (mono path: index 0)
     for (int i = 0; i < channelsToUse && i < 2; i++)
     {
-      switch (g_channelInfos[i].type)
+      switch (state->channelInfos[i].type)
       {
       case ASIOSTFloat32LSB:
-        g_convertSample[i] = convFloat32;
-        g_kind[i] = kKindFloat32;
-        g_scale[i] = 1.0f;
+        state->convertSample[i] = convFloat32;
+        state->kind[i] = AsioState::kKindFloat32;
+        state->scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB:
-        g_convertSample[i] = convInt32;
-        g_kind[i] = kKindInt32;
-        g_scale[i] = (1.0f / 2147483648.0f);
+        state->convertSample[i] = convInt32;
+        state->kind[i] = AsioState::kKindInt32;
+        state->scale[i] = (1.0f / 2147483648.0f);
         break;
       case ASIOSTInt32LSB24:
-        g_convertSample[i] = convInt32LSB24;
-        g_kind[i] = kKindInt32LSB24;
-        g_scale[i] = (1.0f / 8388608.0f);
+        state->convertSample[i] = convInt32LSB24;
+        state->kind[i] = AsioState::kKindInt32LSB24;
+        state->scale[i] = (1.0f / 8388608.0f);
         break;
       case ASIOSTInt32LSB20:
-        g_convertSample[i] = convInt32LSB20;
-        g_kind[i] = kKindUnknown;
-        g_scale[i] = 1.0f;
+        state->convertSample[i] = convInt32LSB20;
+        state->kind[i] = AsioState::kKindUnknown;
+        state->scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB18:
-        g_convertSample[i] = convInt32LSB18;
-        g_kind[i] = kKindUnknown;
-        g_scale[i] = 1.0f;
+        state->convertSample[i] = convInt32LSB18;
+        state->kind[i] = AsioState::kKindUnknown;
+        state->scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB16:
-        g_convertSample[i] = convInt32LSB16;
-        g_kind[i] = kKindUnknown;
-        g_scale[i] = 1.0f;
+        state->convertSample[i] = convInt32LSB16;
+        state->kind[i] = AsioState::kKindUnknown;
+        state->scale[i] = 1.0f;
         break;
       case ASIOSTInt24LSB:
-        g_convertSample[i] = convInt24;
-        g_kind[i] = kKindUnknown;
-        g_scale[i] = 1.0f;
+        state->convertSample[i] = convInt24;
+        state->kind[i] = AsioState::kKindUnknown;
+        state->scale[i] = 1.0f;
         break;
       case ASIOSTInt16LSB:
-        g_convertSample[i] = convInt16;
-        g_kind[i] = kKindInt16;
-        g_scale[i] = (1.0f / 32768.0f);
+        state->convertSample[i] = convInt16;
+        state->kind[i] = AsioState::kKindInt16;
+        state->scale[i] = (1.0f / 32768.0f);
         break;
       default:
-        g_convertSample[i] = nullptr;
-        g_kind[i] = kKindUnknown;
-        g_scale[i] = 1.0f;
+        state->convertSample[i] = nullptr;
+        state->kind[i] = AsioState::kKindUnknown;
+        state->scale[i] = 1.0f;
         break;
       }
     }
 
-    if (s_ring)
-    {
-      delete s_ring;
-      s_ring = nullptr;
-    }
     // ring buffer length: 100 ms mono or 8 blocks, whichever is larger, rounded to power of two
-    const int minFrames100ms = (g_sampleRate > 0 ? static_cast<int>(g_sampleRate * 0.1) : g_preferredSize * 8);
-    const int minFrames = (minFrames100ms > (g_preferredSize * 8) ? minFrames100ms : (g_preferredSize * 8));
+    const int minFrames100ms = (state->sampleRate > 0 ? static_cast<int>(state->sampleRate * 0.1) : state->preferredSize * 8);
+    const int minFrames = (minFrames100ms > (state->preferredSize * 8) ? minFrames100ms : (state->preferredSize * 8));
     int pow2 = 1;
     while (pow2 < minFrames)
       pow2 <<= 1;
     // Double capacity for extra headroom against jitter/underruns
     pow2 <<= 1;
-    s_ring = new RingBufferFloat(static_cast<uint32_t>(pow2));
-    g_bufferPos = 0;
-    g_readPos = 0;
+    ringBuffer.resize(static_cast<uint32_t>(pow2));
+    state->bufferPos = 0;
+    state->readPos = 0;
 
-    s_callbacksEnabled = false;
+    state->callbacksEnabled = false;
     {
       ASIOError sr = ASIOStart();
       if (sr != ASE_OK)
@@ -720,9 +738,9 @@ namespace Newkon
     isStreaming = true;
     Logger::getInstance() << "ASIO stream started for interface: " << asioDevices[currentInterfaceIndex].name
                           << ", input index: " << currentInputIndex
-                          << ", preferred buffer: " << g_preferredSize << std::endl;
-    s_callbacksEnabled = true;
-    s_resetInProgress = false;
+                          << ", preferred buffer: " << state->preferredSize << std::endl;
+    state->callbacksEnabled = true;
+    state->resetInProgress = false;
     return true;
   }
 
@@ -730,37 +748,35 @@ namespace Newkon
   {
     if (!isStreaming)
       return;
-    s_resetInProgress = true;
-    s_callbacksEnabled = false;
+    state->resetInProgress = true;
+    state->callbacksEnabled = false;
     Logger::getInstance() << "ASIO stream stopping" << std::endl;
     ASIOStop();
     // Wait for any in-flight callback to finish before freeing buffers
     for (int spins = 0; spins < 10000; ++spins)
     {
-      if (s_inCallback == 0)
+      if (state->inCallback == 0)
         break;
       _mm_pause();
     }
     ASIODisposeBuffers();
-    if (g_bufferInfos)
+    if (state->bufferInfos)
     {
-      delete[] g_bufferInfos;
-      g_bufferInfos = nullptr;
+      delete[] state->bufferInfos;
+      state->bufferInfos = nullptr;
     }
-    if (g_channelInfos)
+    if (state->channelInfos)
     {
-      delete[] g_channelInfos;
-      g_channelInfos = nullptr;
+      delete[] state->channelInfos;
+      state->channelInfos = nullptr;
     }
-    if (s_ring)
-    {
-      delete s_ring;
-      s_ring = nullptr;
-    }
-    g_bufferPos = 0;
-    g_readPos = 0;
+    // keep member ring buffer alive
+    state->bufferPos = 0;
+    state->readPos = 0;
     isStreaming = false;
     Logger::getInstance() << "ASIO stream stopped" << std::endl;
+    if (AsioInterface::s_current == this)
+      AsioInterface::s_current = nullptr;
   }
 
   void AsioInterface::shutdown()
@@ -769,23 +785,19 @@ namespace Newkon
     if (isStreaming)
       stopAudioStream();
 
-    if (g_bufferInfos)
+    if (state->bufferInfos)
     {
-      delete[] g_bufferInfos;
-      g_bufferInfos = nullptr;
+      delete[] state->bufferInfos;
+      state->bufferInfos = nullptr;
     }
-    if (g_channelInfos)
+    if (state->channelInfos)
     {
-      delete[] g_channelInfos;
-      g_channelInfos = nullptr;
+      delete[] state->channelInfos;
+      state->channelInfos = nullptr;
     }
-    if (s_ring)
-    {
-      delete s_ring;
-      s_ring = nullptr;
-    }
-    g_bufferPos = 0;
-    g_readPos = 0;
+    // keep member ring buffer alive
+    state->bufferPos = 0;
+    state->readPos = 0;
 
     // Tell driver we are done
     ASIODisposeBuffers();
@@ -796,13 +808,13 @@ namespace Newkon
 
   bool AsioInterface::getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels)
   {
-    if (s_resetInProgress)
+    if (state->resetInProgress)
     {
       if (outputBuffer)
         std::memset(outputBuffer, 0, numSamples * numChannels * sizeof(float));
       return false;
     }
-    if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0 || !s_ring)
+    if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0)
     {
       if (outputBuffer)
       {
@@ -815,19 +827,19 @@ namespace Newkon
       return false;
 
     // Ensure read cursor is within bounds
-    if (g_readPos < 0 || g_readPos >= (int)s_ring->capacity())
-      g_readPos = 0;
+    if (state->readPos < 0 || state->readPos >= (int)ringBuffer.capacity())
+      state->readPos = 0;
 
     // Compute available frames (mono) and clamp reads to avoid underrun
-    const int wposNow = g_bufferPos;
-    const int mask = static_cast<int>(s_ring->mask());
-    int available = (wposNow - g_readPos) & mask;
+    const int wposNow = state->bufferPos;
+    const int mask = static_cast<int>(ringBuffer.mask());
+    int available = (wposNow - state->readPos) & mask;
 
     int toRead = total < available ? total : available;
     for (int i = 0; i < toRead; i++)
     {
-      outputBuffer[i] = s_ring->data()[g_readPos];
-      g_readPos = (g_readPos + 1) & mask;
+      outputBuffer[i] = ringBuffer.data()[state->readPos];
+      state->readPos = (state->readPos + 1) & mask;
     }
     if (toRead < total)
     {
@@ -840,42 +852,42 @@ namespace Newkon
 
   bool AsioInterface::getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples)
   {
-    if (s_resetInProgress)
+    if (state->resetInProgress)
       return false;
-    if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0 || !s_ring || !outL || !outR)
+    if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0 || !outL || !outR)
       return false;
 
     if (numSamples <= 0)
       return false;
 
     // Ensure read cursor is within bounds
-    if (g_readPos < 0 || g_readPos >= (int)s_ring->capacity())
-      g_readPos = 0;
+    if (state->readPos < 0 || state->readPos >= (int)ringBuffer.capacity())
+      state->readPos = 0;
 
     // Compute available frames (mono) and clamp reads to avoid underrun
-    const int wposNow = g_bufferPos;
-    const int mask = static_cast<int>(s_ring->mask());
-    int available = (wposNow - g_readPos) & mask;
+    const int wposNow = state->bufferPos;
+    const int mask = static_cast<int>(ringBuffer.mask());
+    int available = (wposNow - state->readPos) & mask;
     int framesToRead = numSamples < available ? numSamples : available;
 
     // Ring is mono frames; duplicate to L/R with contiguous fast path
     int framesLeft = framesToRead;
-    int contFrames = static_cast<int>(s_ring->capacity()) - g_readPos;
+    int contFrames = static_cast<int>(ringBuffer.capacity()) - state->readPos;
     int f1 = framesLeft < contFrames ? framesLeft : contFrames;
     for (int i = 0; i < f1; i++)
     {
-      float v = s_ring->data()[g_readPos++];
+      float v = ringBuffer.data()[state->readPos++];
       outL[i] = v;
       outR[i] = v;
     }
     framesLeft -= f1;
     if (framesLeft > 0)
     {
-      g_readPos = 0;
+      state->readPos = 0;
       int base = f1;
       for (int i = 0; i < framesLeft; i++)
       {
-        float v = s_ring->data()[g_readPos++];
+        float v = ringBuffer.data()[state->readPos++];
         outL[base + i] = v;
         outR[base + i] = v;
       }
@@ -892,17 +904,15 @@ namespace Newkon
 
   int AsioInterface::availableFrames()
   {
-    if (s_resetInProgress)
+    if (state->resetInProgress)
       return 0;
-    if (!s_ring)
-      return 0;
-    const int mask = static_cast<int>(s_ring->mask());
-    const int wposNow = g_bufferPos;
-    return (wposNow - g_readPos) & mask;
+    const int mask = static_cast<int>(ringBuffer.mask());
+    const int wposNow = state->bufferPos;
+    return (wposNow - state->readPos) & mask;
   }
 
   bool AsioInterface::isConnectedAndStreaming()
   {
-    return isStreaming && currentInterfaceIndex >= 0 && currentInputIndex >= 0 && s_ring != nullptr;
+    return isStreaming && currentInterfaceIndex >= 0 && currentInputIndex >= 0 && ringBuffer.capacity() > 0;
   }
 }

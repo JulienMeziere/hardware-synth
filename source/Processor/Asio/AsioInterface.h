@@ -2,6 +2,12 @@
 
 #include <vector>
 #include <string>
+#include "RingBufferFloat.h"
+
+// Forward declare minimal ASIO types to avoid including ASIO headers here
+struct ASIOTime;
+typedef long ASIOBool;
+typedef double ASIOSampleRate;
 
 namespace Newkon
 {
@@ -12,6 +18,8 @@ namespace Newkon
     int deviceIndex;
     bool isDefault;
   };
+
+  struct AsioState; // forward declaration to keep ASIO SDK types out of header
 
   class AsioInterface
   {
@@ -59,6 +67,15 @@ namespace Newkon
     const std::vector<AsioInterfaceInfo> &getAsioDevices();
 
   private:
+    // callback thunks required by ASIO C callbacks
+    static void bufferSwitchThunk(long index, ASIOBool processNow);
+    static ASIOTime *bufferSwitchTimeInfoThunk(ASIOTime *timeInfo, long index, ASIOBool processNow);
+    static void sampleRateDidChangeThunk(ASIOSampleRate sRate);
+    static long asioMessageThunk(long selector, long value, void *message, double *opt);
+
+    // active instance for callback thunks
+    static AsioInterface *s_current;
+
     // Store the list of ASIO interfaces
     std::vector<AsioInterfaceInfo> asioDevices;
 
@@ -67,6 +84,9 @@ namespace Newkon
     int currentInputIndex;
     bool isStreaming;
 
-    // Internal ring buffer managed in implementation file
+    RingBufferFloat ringBuffer;
+
+    // Internal ASIO driver state
+    AsioState *state;
   };
 }
