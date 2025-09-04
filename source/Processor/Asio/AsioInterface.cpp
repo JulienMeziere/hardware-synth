@@ -13,6 +13,7 @@
 #include <atomic>
 #include <xmmintrin.h>
 #include <immintrin.h>
+#include "AsioConverters.h"
 
 // ASIO SDK includes
 #include "asiosys.h"
@@ -88,52 +89,6 @@ namespace Newkon
     }
   }
 
-  // Converters (implementations remain file-local)
-
-  static float convFloat32(const void *src, long index)
-  {
-    const float *pf = static_cast<const float *>(src);
-    return pf[index];
-  }
-  static float convInt32(const void *src, long index)
-  {
-    const int32_t *pi = static_cast<const int32_t *>(src);
-    return static_cast<float>(pi[index]) * (1.0f / 2147483648.0f);
-  }
-  static float convInt32LSB24(const void *src, long index)
-  {
-    const int32_t *pi = static_cast<const int32_t *>(src);
-    return static_cast<float>(pi[index]) * (1.0f / 8388608.0f);
-  }
-  static float convInt32LSB20(const void *src, long index)
-  {
-    const int32_t *pi = static_cast<const int32_t *>(src);
-    return static_cast<float>(pi[index]) * (1.0f / 524288.0f);
-  }
-  static float convInt32LSB18(const void *src, long index)
-  {
-    const int32_t *pi = static_cast<const int32_t *>(src);
-    return static_cast<float>(pi[index]) * (1.0f / 262144.0f);
-  }
-  static float convInt32LSB16(const void *src, long index)
-  {
-    const int32_t *pi = static_cast<const int32_t *>(src);
-    return static_cast<float>(pi[index]) * (1.0f / 32768.0f);
-  }
-  static float convInt24(const void *src, long index)
-  {
-    const unsigned char *p = static_cast<const unsigned char *>(src);
-    const int32_t o = index * 3;
-    int32_t s = (int32_t)((int32_t)p[o + 0] | ((int32_t)p[o + 1] << 8) | ((int32_t)p[o + 2] << 16));
-    if (s & 0x00800000)
-      s |= 0xFF000000;
-    return (float)s * (1.0f / 8388608.0f);
-  }
-  static float convInt16(const void *src, long index)
-  {
-    const int16_t *ps = static_cast<const int16_t *>(src);
-    return ps[index] * (1.0f / 32768.0f);
-  }
   void AsioInterface::bufferSwitchThunk(long index, ASIOBool /*processNow*/)
   {
     AsioInterface *self = AsioInterface::s_current;
@@ -666,42 +621,42 @@ namespace Newkon
       switch (state->channelInfos[i].type)
       {
       case ASIOSTFloat32LSB:
-        state->convertSample[i] = convFloat32;
+        state->convertSample[i] = AsioConverters::convFloat32;
         state->kind[i] = AsioState::kKindFloat32;
         state->scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB:
-        state->convertSample[i] = convInt32;
+        state->convertSample[i] = AsioConverters::convInt32;
         state->kind[i] = AsioState::kKindInt32;
         state->scale[i] = (1.0f / 2147483648.0f);
         break;
       case ASIOSTInt32LSB24:
-        state->convertSample[i] = convInt32LSB24;
+        state->convertSample[i] = AsioConverters::convInt32LSB24;
         state->kind[i] = AsioState::kKindInt32LSB24;
         state->scale[i] = (1.0f / 8388608.0f);
         break;
       case ASIOSTInt32LSB20:
-        state->convertSample[i] = convInt32LSB20;
+        state->convertSample[i] = AsioConverters::convInt32LSB20;
         state->kind[i] = AsioState::kKindUnknown;
         state->scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB18:
-        state->convertSample[i] = convInt32LSB18;
+        state->convertSample[i] = AsioConverters::convInt32LSB18;
         state->kind[i] = AsioState::kKindUnknown;
         state->scale[i] = 1.0f;
         break;
       case ASIOSTInt32LSB16:
-        state->convertSample[i] = convInt32LSB16;
+        state->convertSample[i] = AsioConverters::convInt32LSB16;
         state->kind[i] = AsioState::kKindUnknown;
         state->scale[i] = 1.0f;
         break;
       case ASIOSTInt24LSB:
-        state->convertSample[i] = convInt24;
+        state->convertSample[i] = AsioConverters::convInt24;
         state->kind[i] = AsioState::kKindUnknown;
         state->scale[i] = 1.0f;
         break;
       case ASIOSTInt16LSB:
-        state->convertSample[i] = convInt16;
+        state->convertSample[i] = AsioConverters::convInt16;
         state->kind[i] = AsioState::kKindInt16;
         state->scale[i] = (1.0f / 32768.0f);
         break;
