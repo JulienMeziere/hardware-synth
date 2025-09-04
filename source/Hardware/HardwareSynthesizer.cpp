@@ -33,6 +33,8 @@ namespace Newkon
     {
       connected = true;
       Logger::getInstance() << "Successfully connected to: " << deviceName << std::endl;
+      if (midiOutHandle)
+        scheduler.start(midiOutHandle);
       return true;
     }
     else
@@ -47,6 +49,7 @@ namespace Newkon
     if (!connected)
       return;
 
+    scheduler.stop();
     cleanupMIDI();
     connected = false;
     Logger::getInstance() << "Disconnected from: " << deviceName << std::endl;
@@ -125,6 +128,69 @@ namespace Newkon
 
       return false;
     }
+  }
+
+  void HardwareSynthesizer::scheduleMIDINote(UINT note, UINT velocity, UINT channel, double offsetSeconds)
+  {
+    if (!connected || inputDevice || !midiOutHandle)
+      return;
+    DWORD msg = 0x90 | (channel & 0x0F);
+    msg |= (note & 0x7F) << 8;
+    msg |= (velocity & 0x7F) << 16;
+    auto when = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(offsetSeconds));
+    scheduler.scheduleShortMsg(msg, when);
+  }
+
+  void HardwareSynthesizer::scheduleMIDINoteOff(UINT note, UINT channel, double offsetSeconds)
+  {
+    if (!connected || inputDevice || !midiOutHandle)
+      return;
+    DWORD msg = 0x80 | (channel & 0x0F);
+    msg |= (note & 0x7F) << 8;
+    msg |= 64 << 16;
+    auto when = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(offsetSeconds));
+    scheduler.scheduleShortMsg(msg, when);
+  }
+
+  void HardwareSynthesizer::scheduleMIDIControlChange(UINT controller, UINT value, UINT channel, double offsetSeconds)
+  {
+    if (!connected || inputDevice || !midiOutHandle)
+      return;
+    DWORD msg = 0xB0 | (channel & 0x0F);
+    msg |= (controller & 0x7F) << 8;
+    msg |= (value & 0x7F) << 16;
+    auto when = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(offsetSeconds));
+    scheduler.scheduleShortMsg(msg, when);
+  }
+
+  void HardwareSynthesizer::scheduleMIDINoteAt(UINT note, UINT velocity, UINT channel, std::chrono::steady_clock::time_point when)
+  {
+    if (!connected || inputDevice || !midiOutHandle)
+      return;
+    DWORD msg = 0x90 | (channel & 0x0F);
+    msg |= (note & 0x7F) << 8;
+    msg |= (velocity & 0x7F) << 16;
+    scheduler.scheduleShortMsg(msg, when);
+  }
+
+  void HardwareSynthesizer::scheduleMIDINoteOffAt(UINT note, UINT channel, std::chrono::steady_clock::time_point when)
+  {
+    if (!connected || inputDevice || !midiOutHandle)
+      return;
+    DWORD msg = 0x80 | (channel & 0x0F);
+    msg |= (note & 0x7F) << 8;
+    msg |= 64 << 16;
+    scheduler.scheduleShortMsg(msg, when);
+  }
+
+  void HardwareSynthesizer::scheduleMIDIControlChangeAt(UINT controller, UINT value, UINT channel, std::chrono::steady_clock::time_point when)
+  {
+    if (!connected || inputDevice || !midiOutHandle)
+      return;
+    DWORD msg = 0xB0 | (channel & 0x0F);
+    msg |= (controller & 0x7F) << 8;
+    msg |= (value & 0x7F) << 16;
+    scheduler.scheduleShortMsg(msg, when);
   }
 
   bool HardwareSynthesizer::initializeMIDI()

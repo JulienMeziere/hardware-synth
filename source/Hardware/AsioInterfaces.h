@@ -43,6 +43,15 @@ namespace Newkon
     // Get audio data directly into separate L/R buffers (stereo)
     static bool getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples);
 
+    // Query how many mono frames are currently available to read
+    static int availableFrames();
+
+    // True if an ASIO interface and input are connected and streaming
+    static bool isConnectedAndStreaming();
+
+    // Handle driver reset requests (buffer size/sample rate changes)
+    static void handlePendingReset();
+
     // Get the stored ASIO interfaces
     static const std::vector<AsioInterfaceInfo> &getAsioDevices();
 
@@ -54,5 +63,7 @@ namespace Newkon
     static int currentInterfaceIndex;
     static int currentInputIndex;
     static bool isStreaming;
+
+    // Internal ring buffer managed in implementation file
   };
 }

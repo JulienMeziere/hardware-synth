@@ -4,6 +4,8 @@
 #include <memory>
 #include <windows.h>
 #include <mmsystem.h>
+#include "MIDIScheduler.h"
+#include <chrono>
 
 namespace Newkon
 {
@@ -31,6 +33,16 @@ namespace Newkon
     bool sendMIDINoteOff(UINT note, UINT channel = 0);
     bool sendMIDIControlChange(UINT controller, UINT value, UINT channel = 0);
 
+    // Scheduled (time-aware) sending API
+    void scheduleMIDINote(UINT note, UINT velocity, UINT channel, double offsetSeconds);
+    void scheduleMIDINoteOff(UINT note, UINT channel, double offsetSeconds);
+    void scheduleMIDIControlChange(UINT controller, UINT value, UINT channel, double offsetSeconds);
+
+    // Absolute-time variants (use one baseNow per process block in caller)
+    void scheduleMIDINoteAt(UINT note, UINT velocity, UINT channel, std::chrono::steady_clock::time_point when);
+    void scheduleMIDINoteOffAt(UINT note, UINT channel, std::chrono::steady_clock::time_point when);
+    void scheduleMIDIControlChangeAt(UINT controller, UINT value, UINT channel, std::chrono::steady_clock::time_point when);
+
   private:
     std::string deviceName;
     std::string manufacturer;
@@ -41,6 +53,7 @@ namespace Newkon
     // MIDI handles
     HMIDIOUT midiOutHandle;
     HMIDIIN midiInHandle;
+    MIDIScheduler scheduler;
 
     bool initializeMIDI();
     void cleanupMIDI();

@@ -122,91 +122,21 @@ namespace Newkon
 
 				void didOpen(VSTGUI::VST3Editor *editor) override
 				{
-					Logger::getInstance() << "ButtonCreationDelegate::didOpen() called" << std::endl;
-
-					// DEBUG: Let's see what's actually in the UI hierarchy
 					if (editor && editor->getFrame())
 					{
 						auto *frame = editor->getFrame();
-						Logger::getInstance() << "=== UI HIERARCHY DEBUG ===" << std::endl;
-						Logger::getInstance() << "Frame has " << frame->getNbViews() << " views" << std::endl;
-
-						// Log all views in the frame
-						for (int32_t i = 0; i < frame->getNbViews(); i++)
-						{
-							auto *view = frame->getView(i);
-							if (view)
-							{
-								auto *scrollView = dynamic_cast<VSTGUI::CScrollView *>(view);
-								auto *container = dynamic_cast<VSTGUI::CViewContainer *>(view);
-
-								Logger::getInstance() << "View " << i << ": ";
-								if (scrollView)
-								{
-									Logger::getInstance() << "CScrollView (visible: " << (scrollView->isVisible() ? "true" : "false") << ")";
-								}
-								else if (container)
-								{
-									Logger::getInstance() << "CViewContainer with " << container->getNbViews() << " sub-views";
-								}
-								else
-								{
-									Logger::getInstance() << "Other view type";
-								}
-								Logger::getInstance() << std::endl;
-
-								// If it's a container, check its sub-views
-								if (container)
-								{
-									for (int32_t j = 0; j < container->getNbViews(); j++)
-									{
-										auto *subView = container->getView(j);
-										if (subView)
-										{
-											auto *subScrollView = dynamic_cast<VSTGUI::CScrollView *>(subView);
-											Logger::getInstance() << "  Sub-view " << j << ": ";
-											if (subScrollView)
-											{
-												Logger::getInstance() << "CScrollView (visible: " << (subScrollView->isVisible() ? "true" : "false") << ")";
-											}
-											else
-											{
-												Logger::getInstance() << "Other type";
-											}
-											Logger::getInstance() << std::endl;
-										}
-									}
-								}
-							}
-						}
-						Logger::getInstance() << "=== END UI HIERARCHY DEBUG ===" << std::endl;
-
-						// Hide the second and third scrollviews (ASIO interfaces and ASIO inputs) in the first container
 						auto *firstView = frame->getView(0);
 						if (firstView)
 						{
 							auto *container = dynamic_cast<VSTGUI::CViewContainer *>(firstView);
 							if (container && container->getNbViews() >= 3)
 							{
-								// Hide second scrollview (ASIO interfaces)
 								auto *secondScrollView = dynamic_cast<VSTGUI::CScrollView *>(container->getView(1));
 								if (secondScrollView)
-								{
 									secondScrollView->setVisible(false);
-									Logger::getInstance() << "Hidden second scrollview (ASIO interfaces) in container at sub-index 1" << std::endl;
-								}
-
-								// Hide third scrollview (ASIO inputs)
 								auto *thirdScrollView = dynamic_cast<VSTGUI::CScrollView *>(container->getView(2));
 								if (thirdScrollView)
-								{
 									thirdScrollView->setVisible(false);
-									Logger::getInstance() << "Hidden third scrollview (ASIO inputs) in container at sub-index 2" << std::endl;
-								}
-							}
-							else
-							{
-								Logger::getInstance() << "First view is not a container or doesn't have 3 sub-views" << std::endl;
 							}
 						}
 					}
@@ -267,7 +197,6 @@ namespace Newkon
 		// If no MIDI devices, try to get them again
 		if (midiDevices.empty())
 		{
-			Logger::getInstance() << "No MIDI devices found, trying to detect them again..." << std::endl;
 			midiDevices = MIDIDevices::listMIDIdevices();
 		}
 
@@ -284,7 +213,6 @@ namespace Newkon
 			Logger::getInstance() << "Cannot create buttons: frame is null" << std::endl;
 			return;
 		}
-		Logger::getInstance() << "Frame found, searching for scroll view..." << std::endl;
 
 		// Find the first scroll view (MIDI devices) in the container
 		VSTGUI::CScrollView *scrollView = nullptr;
@@ -299,26 +227,9 @@ namespace Newkon
 				if (container && container->getNbViews() >= 1)
 				{
 					scrollView = dynamic_cast<VSTGUI::CScrollView *>(container->getView(0));
-					if (scrollView)
-					{
-						Logger::getInstance() << "Found MIDI devices scroll view in container at sub-index 0" << std::endl;
-					}
-					else
-					{
-						Logger::getInstance() << "Sub-view 0 is not a scrollview" << std::endl;
-					}
-				}
-				else
-				{
-					Logger::getInstance() << "First view is not a container or has no sub-views" << std::endl;
 				}
 			}
 		}
-		else
-		{
-			Logger::getInstance() << "Frame has no views" << std::endl;
-		}
-
 		// Store reference to scroll view for later hiding
 		this->scrollView = scrollView;
 
@@ -327,7 +238,6 @@ namespace Newkon
 			Logger::getInstance() << "No scroll view found!" << std::endl;
 			return;
 		}
-		Logger::getInstance() << "Scroll view found, proceeding with button creation..." << std::endl;
 
 		// Use scroll view as target container
 		VSTGUI::CViewContainer *targetContainer = scrollView;
@@ -338,12 +248,9 @@ namespace Newkon
 			return;
 		}
 
-		Logger::getInstance() << "Using scroll view as target container" << std::endl;
-
 		// Check if buttons are already created to avoid duplicates
 		if (targetContainer->getNbViews() > 1)
 		{
-			Logger::getInstance() << "Buttons already exist, skipping creation" << std::endl;
 			return; // Buttons already exist
 		}
 
@@ -389,12 +296,10 @@ namespace Newkon
 		{
 			int containerHeight = currentY + 10;
 			scrollView->setContainerSize(VSTGUI::CRect(0, 0, 220, containerHeight));
-			Logger::getInstance() << "Updated scroll view container size to height: " << containerHeight << std::endl;
 		}
 
 		// Refresh the view
 		targetContainer->setDirty(true);
-		Logger::getInstance() << "Button creation completed successfully!" << std::endl;
 	}
 
 	//------------------------------------------------------------------------
@@ -432,15 +337,9 @@ namespace Newkon
 			size_t interfaceIndex = tag - 2000;
 			if (interfaceIndex < asioInterfaces.size())
 			{
-				// Store the selected ASIO interface
 				selectedAsioInterface = static_cast<int>(interfaceIndex);
-
-				// Connect to the selected ASIO interface
 				if (AsioInterfaces::connectToInterface(static_cast<int>(interfaceIndex)))
 				{
-					Logger::getInstance() << "Connected to ASIO interface: " << asioInterfaces[interfaceIndex] << std::endl;
-
-					// Show the third scrollview with ASIO inputs
 					showAsioInputs();
 				}
 			}
@@ -451,20 +350,9 @@ namespace Newkon
 			size_t inputIndex = tag - 3000;
 			if (inputIndex < asioInputs.size())
 			{
-				Logger::getInstance() << "Selected ASIO input: " << asioInputs[inputIndex] << " from interface: " << asioInterfaces[selectedAsioInterface] << std::endl;
-
-				// Connect to the selected ASIO input
 				if (AsioInterfaces::connectToInput(static_cast<int>(inputIndex)))
 				{
-					// Start audio streaming from the selected input
-					if (AsioInterfaces::startAudioStream())
-					{
-						Logger::getInstance() << "Audio streaming started from " << asioInputs[inputIndex] << std::endl;
-
-						// Keep the ASIO inputs scrollview visible so user can switch inputs
-						// No need to hide it - user can select different inputs easily
-					}
-					else
+					if (!AsioInterfaces::startAudioStream())
 					{
 						Logger::getInstance() << "Failed to start audio streaming" << std::endl;
 					}
@@ -499,30 +387,22 @@ namespace Newkon
 				if (scrollView)
 				{
 					scrollView->setVisible(true);
-					Logger::getInstance() << "MIDI devices scroll view set to visible" << std::endl;
 				}
 
 				// Hide audio inputs scroll view
 				if (audioInputsScrollView)
 				{
 					audioInputsScrollView->setVisible(false);
-					Logger::getInstance() << "Audio inputs scroll view set to hidden" << std::endl;
 				}
 				else
 				{
 					// If audioInputsScrollView is not yet initialized, get it and hide it
 					if (editor && editor->getFrame())
 					{
-						Logger::getInstance() << "Attempting to get audio inputs scroll view at index 1..." << std::endl;
 						audioInputsScrollView = dynamic_cast<VSTGUI::CScrollView *>(editor->getFrame()->getView(1));
 						if (audioInputsScrollView)
 						{
 							audioInputsScrollView->setVisible(false);
-							Logger::getInstance() << "Audio inputs scroll view found and hidden on startup" << std::endl;
-						}
-						else
-						{
-							Logger::getInstance() << "Could not find audio inputs scroll view at index 1" << std::endl;
 						}
 					}
 				}
@@ -565,22 +445,9 @@ namespace Newkon
 
 								// Show the scroll view
 								audioInputsScrollView->setVisible(true);
-								Logger::getInstance() << "Audio inputs scroll view found in container at sub-index 1 and shown" << std::endl;
 							}
-							else
-							{
-								Logger::getInstance() << "Sub-view 1 is not a scrollview" << std::endl;
-							}
-						}
-						else
-						{
-							Logger::getInstance() << "First view is not a container or doesn't have 2 sub-views" << std::endl;
 						}
 					}
-				}
-				else
-				{
-					Logger::getInstance() << "Frame has no views" << std::endl;
 				}
 			}
 		}
@@ -618,22 +485,9 @@ namespace Newkon
 
 								// Show the scroll view
 								asioInputsScrollView->setVisible(true);
-								Logger::getInstance() << "ASIO inputs scroll view found in container at sub-index 2 and shown" << std::endl;
 							}
-							else
-							{
-								Logger::getInstance() << "Sub-view 2 is not a scrollview" << std::endl;
-							}
-						}
-						else
-						{
-							Logger::getInstance() << "First view is not a container or doesn't have 3 sub-views" << std::endl;
 						}
 					}
-				}
-				else
-				{
-					Logger::getInstance() << "Frame has no views" << std::endl;
 				}
 			}
 		}

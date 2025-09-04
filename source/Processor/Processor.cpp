@@ -14,6 +14,7 @@
 
 #include "Processor.h"
 #include "../cids.h"
+#include <immintrin.h>
 
 using namespace Steinberg;
 
@@ -92,6 +93,9 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	tresult PLUGIN_API HardwareSynthProcessor::process(Vst::ProcessData &data)
 	{
+		// React to ASIO driver reset requests (buffer size/sample rate changes)
+		AsioInterfaces::handlePendingReset();
+
 		// Read inputs parameter changes
 		if (data.inputParameterChanges)
 		{
@@ -112,47 +116,45 @@ namespace Newkon
 			}
 		}
 
-		// Process MIDI events and forward to connected synthesizer
+		// Process MIDI events and forward to connected synthesizer (time-aware via scheduler)
 		if (data.inputEvents && connectedSynthesizer)
 		{
+			auto baseNow = std::chrono::steady_clock::now();
 			int32 numEvents = data.inputEvents->getEventCount();
 			for (int32 i = 0; i < numEvents; i++)
 			{
 				Vst::Event event;
 				if (data.inputEvents->getEvent(i, event) == kResultOk)
 				{
-					// Forward MIDI events to connected synthesizer
+					double offsetSeconds = 0.0;
+					if (event.sampleOffset > 0 && sampleRate > 0.0)
+						offsetSeconds = static_cast<double>(event.sampleOffset) / sampleRate;
+					auto when = baseNow + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(offsetSeconds));
+
 					if (event.type == Vst::Event::kNoteOnEvent)
 					{
-						// Convert VST3 note on to MIDI note on
 						UINT note = static_cast<UINT>(event.noteOn.pitch);
 						UINT velocity = static_cast<UINT>(event.noteOn.velocity * 127.0f);
 						UINT channel = static_cast<UINT>(event.noteOn.channel);
-
-						connectedSynthesizer->sendMIDINote(note, velocity, channel);
+						connectedSynthesizer->scheduleMIDINoteAt(note, velocity, channel, when);
 					}
 					else if (event.type == Vst::Event::kNoteOffEvent)
 					{
-						// Convert VST3 note off to MIDI note off
 						UINT note = static_cast<UINT>(event.noteOff.pitch);
 						UINT channel = static_cast<UINT>(event.noteOff.channel);
-
-						connectedSynthesizer->sendMIDINoteOff(note, channel);
+						connectedSynthesizer->scheduleMIDINoteOffAt(note, channel, when);
 					}
 					else if (event.type == Vst::Event::kDataEvent)
 					{
-						// Handle MIDI CC and other data events
 						if (event.data.size >= 3)
 						{
 							UINT status = event.data.bytes[0];
 							UINT data1 = event.data.bytes[1];
 							UINT data2 = event.data.bytes[2];
-
-							// Check if it's a Control Change message (0xB0-0xBF)
 							if ((status & 0xF0) == 0xB0)
 							{
 								UINT channel = status & 0x0F;
-								connectedSynthesizer->sendMIDIControlChange(data1, data2, channel);
+								connectedSynthesizer->scheduleMIDIControlChangeAt(data1, data2, channel, when);
 							}
 						}
 					}
@@ -163,14 +165,14 @@ namespace Newkon
 		//--- Audio processing: Forward ASIO input to DAW output
 		if (data.numSamples > 0 && data.outputs && data.outputs[0].numChannels >= 2)
 		{
-			Vst::Sample32 *__restrict outL = data.outputs[0].channelBuffers32[0];
-			Vst::Sample32 *__restrict outR = data.outputs[0].channelBuffers32[1];
-
-			// Pull audio directly into output buffers (no intermediate alloc)
-			if (!AsioInterfaces::getAudioDataStereo(outL, outR, data.numSamples))
+			// Simple policy: if enough samples are available now, copy; otherwise leave buffers as-is
+			if (AsioInterfaces::availableFrames() >= data.numSamples)
 			{
-				std::memset(outL, 0, sizeof(float) * data.numSamples);
-				std::memset(outR, 0, sizeof(float) * data.numSamples);
+				AsioInterfaces::getAudioDataStereo(data.outputs[0].channelBuffers32[0], data.outputs[0].channelBuffers32[1], data.numSamples);
+			}
+			else
+			{
+				// leave host buffers untouched when not enough data
 			}
 		}
 
