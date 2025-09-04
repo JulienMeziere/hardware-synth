@@ -24,56 +24,66 @@ namespace Newkon
   class AsioInterface
   {
   public:
+    // Owns a single ASIO driver connection and a mono ring buffer bridging the ASIO thread to the host thread.
     AsioInterface();
     ~AsioInterface();
 
-    // Get list of available ASIO interfaces
+    // Enumerate installed ASIO drivers; populates internal device list and returns their names.
     std::vector<std::string> listAsioInterfaces();
 
-    // Connect to a specific ASIO interface by index
+    // Load and initialize the selected ASIO driver by index; cleans up any prior connection.
     bool connectToInterface(int deviceIndex);
 
-    // Get available inputs for a specific ASIO interface
+    // Return available input channel names for a given interface (connects to it if necessary).
     std::vector<std::string> getAsioInputs(int deviceIndex);
 
-    // Connect to a specific input on the current ASIO interface
+    // Select the input channel index to use (first of a possible stereo pair). Does not start streaming.
     bool connectToInput(int inputIndex);
 
-    // Start audio streaming from the connected input
+    // Create ASIO buffers, bind callbacks, size the ring buffer, and start streaming.
     bool startAudioStream();
 
-    // Stop audio streaming
+    // Stop streaming, wait for in-flight callbacks, and dispose ASIO buffers.
     void stopAudioStream();
 
-    // Properly shutdown ASIO driver and clear state
+    // Full teardown of the driver and buffers; safe to call multiple times.
     void shutdown();
 
-    // Get audio data from the connected input (called by VST process)
+    // Read mono samples into an interleaved buffer (numChannels channels); zero-fills on underrun.
     bool getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels);
 
-    // Get audio data directly into separate L/R buffers (stereo)
+    // Read mono samples and duplicate into L/R buffers; zero-fills on underrun.
     bool getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples);
 
-    // Query how many mono frames are currently available to read
+    // Number of readable mono frames currently buffered.
     int availableFrames();
 
-    // True if an ASIO interface and input are connected and streaming
+    // True if a driver is initialized, an input is selected, and the stream is running.
     bool isConnectedAndStreaming();
 
-    // Handle driver reset requests (buffer size/sample rate changes)
-    void handlePendingReset();
-
-    // Get the stored ASIO interfaces
+    // Access the last enumerated list of ASIO devices.
     const std::vector<AsioInterfaceInfo> &getAsioDevices();
 
   private:
-    // callback thunks required by ASIO C callbacks
+    // Handle pending ASIO reset notifications by rebuilding buffers and restarting.
+    void handlePendingReset();
+
+    // Called by the ASIO driver on its audio thread when the driver flips the double-buffer.
+    // index is 0/1 selecting which buffer half is ready. Forwards to the active instance.
     static void bufferSwitchThunk(long index, ASIOBool processNow);
+
+    // Variant of bufferSwitch that includes timing info from the driver. Forwards to the active instance.
+    // Must return the same ASIOTime* it received after handling the buffer flip.
     static ASIOTime *bufferSwitchTimeInfoThunk(ASIOTime *timeInfo, long index, ASIOBool processNow);
+
+    // Notification that the driver's sample rate changed while running; updates instance state.
     static void sampleRateDidChangeThunk(ASIOSampleRate sRate);
+
+    // Generic driver message callback (reset/resync/latency changed, etc.). Sets reset flags on the instance.
+    // Returns 1 when the message is handled, 0 to indicate unsupported selector.
     static long asioMessageThunk(long selector, long value, void *message, double *opt);
 
-    // active instance for callback thunks
+    // Active instance for callback forwarding; set when buffers are created and cleared on stop/failure.
     static AsioInterface *s_current;
 
     // Store the list of ASIO interfaces

@@ -40,10 +40,8 @@ namespace Newkon
     ASIOSampleRate sampleRate = 0.0;
     int bufferPos = 0;
     int readPos = 0;
-    volatile bool resetRequested = false;
     volatile bool callbacksEnabled = false;
-    volatile int inCallback = 0;
-    volatile bool resetInProgress = false;
+    volatile int activeCallbackCount = 0;
     int selectedInputIndex = -1;
     // converters (mono path uses index 0)
     typedef float (*SampleConverter)(const void *src, long index);
@@ -97,17 +95,15 @@ namespace Newkon
     AsioState *st = self->state;
     if (!st->callbacksEnabled)
       return;
-    if (st->resetInProgress)
-      return;
-    ++st->inCallback;
+    ++st->activeCallbackCount;
     if (!st->bufferInfos || !st->channelInfos || st->preferredSize <= 0)
     {
-      --st->inCallback;
+      --st->activeCallbackCount;
       return;
     }
     if (index != 0 && index != 1)
     {
-      --st->inCallback;
+      --st->activeCallbackCount;
       return;
     }
 
@@ -130,7 +126,7 @@ namespace Newkon
       const void *src0 = st->bufferInfos[0].buffers[index];
       if (!src0)
       {
-        --st->inCallback;
+        --st->activeCallbackCount;
         return;
       }
 
@@ -256,7 +252,7 @@ namespace Newkon
 
       st->bufferPos = wpos;
     }
-    --st->inCallback;
+    --st->activeCallbackCount;
   }
 
   ASIOTime *AsioInterface::bufferSwitchTimeInfoThunk(ASIOTime *timeInfo, long index, ASIOBool processNow)
@@ -275,6 +271,7 @@ namespace Newkon
 
   long AsioInterface::asioMessageThunk(long selector, long value, void *message, double *opt)
   {
+    bool resetRequested = false;
     AsioInterface *self = AsioInterface::s_current;
     if (!self || !self->state)
       return 0;
@@ -286,25 +283,31 @@ namespace Newkon
     case kAsioEngineVersion:
       return 2;
     case kAsioResetRequest:
-      st->resetRequested = true;
-      st->resetInProgress = true;
-      Logger::getInstance() << "ASIO reset requested by driver" << std::endl;
+      resetRequested = true;
+      Logger::getInstance() << "Message reset" << std::endl;
       return 1;
     case kAsioResyncRequest:
       // Latency or buffer size may have changed; handle like reset
-      st->resetRequested = true;
-      st->resetInProgress = true;
-      Logger::getInstance() << "ASIO resync requested by driver" << std::endl;
+      resetRequested = true;
+      Logger::getInstance() << "Message resync" << std::endl;
       return 1;
     case kAsioLatenciesChanged:
       // Not all drivers use ResetRequest; be safe and rebuild buffers
-      st->resetRequested = true;
-      st->resetInProgress = true;
-      Logger::getInstance() << "ASIO latencies changed" << std::endl;
+      resetRequested = true;
+      Logger::getInstance() << "Message latencies changed" << std::endl;
       return 1;
     default:
       return 0;
     }
+    if (resetRequested)
+      self->handlePendingReset();
+  }
+
+  void AsioInterface::handlePendingReset()
+  {
+    Logger::getInstance() << "ASIO reset requested by driver" << std::endl;
+    if (state)
+      state->callbacksEnabled = false;
   }
 
   AsioInterface::AsioInterface() : currentInterfaceIndex(-1), currentInputIndex(-1), isStreaming(false), ringBuffer(1)
@@ -319,66 +322,6 @@ namespace Newkon
     state = nullptr;
     if (AsioInterface::s_current == this)
       AsioInterface::s_current = nullptr;
-  }
-
-  void AsioInterface::handlePendingReset()
-  {
-    if (!state->resetRequested)
-      return;
-    state->resetRequested = false;
-
-    if (currentInterfaceIndex < 0 || currentInputIndex < 0)
-      return;
-
-    // Mark reset in progress to make all readers/writers no-op
-    state->resetInProgress = true;
-
-    // ASIO-recommended reset: do not unload/reload driver; just rebuild buffers
-    const long oldPreferred = state->preferredSize;
-    stopAudioStream();
-    Sleep(10);
-
-    long minS = 0, maxS = 0, prefS = 0, gran = 0;
-    ASIOError bsRc = ASIOGetBufferSize(&minS, &maxS, &prefS, &gran);
-    if (bsRc != ASE_OK)
-    {
-      Logger::getInstance() << "ASIOGetBufferSize after reset failed: " << asioErrStr(bsRc) << std::endl;
-      return;
-    }
-    state->minSize = minS;
-    state->maxSize = maxS;
-    state->preferredSize = prefS;
-    state->granularity = gran;
-
-    ASIOSampleRate sr = 0.0;
-    ASIOError srRc = ASIOGetSampleRate(&sr);
-    if (srRc == ASE_OK)
-      state->sampleRate = sr;
-
-    // Recreate buffers and restart. Retry a few times if start fails.
-    bool started = false;
-    for (int attempt = 0; attempt < 3 && !started; ++attempt)
-    {
-      if (startAudioStream())
-      {
-        started = true;
-        break;
-      }
-      Sleep(10);
-    }
-    if (!started)
-    {
-      Logger::getInstance() << "ASIO reset error: start stream failed" << std::endl;
-      // keep s_resetInProgress true so readers stay silent
-      return;
-    }
-    if (state->preferredSize != oldPreferred)
-    {
-      Logger::getInstance() << "ASIO buffer size changed: " << oldPreferred << " -> " << state->preferredSize << std::endl;
-    }
-
-    // Reset completed; allow readers/writers to resume
-    state->resetInProgress = false;
   }
 
   std::vector<std::string> AsioInterface::listAsioInterfaces()
@@ -418,6 +361,7 @@ namespace Newkon
       Logger::getInstance() << "ASIO interface disconnect: " << asioDevices[currentInterfaceIndex].name << std::endl;
     }
 
+    Logger::getInstance() << "Stopping audio stream called from connectToInterface" << std::endl;
     stopAudioStream();
     ASIOExit();
 
@@ -461,12 +405,16 @@ namespace Newkon
     if (chRc != ASE_OK)
     {
       Logger::getInstance() << "ASIOGetChannels failed: " << asioErrStr(chRc) << std::endl;
+      ASIOExit();
+      currentInterfaceIndex = -1;
       return false;
     }
     ASIOError bsRc = ASIOGetBufferSize(&state->minSize, &state->maxSize, &state->preferredSize, &state->granularity);
     if (bsRc != ASE_OK)
     {
       Logger::getInstance() << "ASIOGetBufferSize failed: " << asioErrStr(bsRc) << std::endl;
+      ASIOExit();
+      currentInterfaceIndex = -1;
       return false;
     }
     ASIOError srRc = ASIOGetSampleRate(&state->sampleRate);
@@ -549,11 +497,9 @@ namespace Newkon
       return false;
     }
 
-    // Prevent readers while (re)creating buffers
-    state->resetInProgress = true;
-
     if (isStreaming)
     {
+      Logger::getInstance() << "Stopping audio stream called from startAudioStream" << std::endl;
       stopAudioStream();
     }
 
@@ -591,6 +537,10 @@ namespace Newkon
       if (cr != ASE_OK)
       {
         Logger::getInstance() << "ASIOCreateBuffers failed: " << asioErrStr(cr) << std::endl;
+        // cleanup allocated arrays and instance pointer
+        AsioInterface::s_current = nullptr;
+        delete[] state->bufferInfos;
+        state->bufferInfos = nullptr;
         return false;
       }
     }
@@ -686,6 +636,21 @@ namespace Newkon
       if (sr != ASE_OK)
       {
         Logger::getInstance() << "ASIOStart failed: " << asioErrStr(sr) << std::endl;
+        // cleanup if start fails to avoid leaks and dangling callbacks
+        ASIODisposeBuffers();
+        if (state->bufferInfos)
+        {
+          delete[] state->bufferInfos;
+          state->bufferInfos = nullptr;
+        }
+        if (state->channelInfos)
+        {
+          delete[] state->channelInfos;
+          state->channelInfos = nullptr;
+        }
+        state->bufferPos = 0;
+        state->readPos = 0;
+        AsioInterface::s_current = nullptr;
         return false;
       }
     }
@@ -695,7 +660,6 @@ namespace Newkon
                           << ", input index: " << currentInputIndex
                           << ", preferred buffer: " << state->preferredSize << std::endl;
     state->callbacksEnabled = true;
-    state->resetInProgress = false;
     return true;
   }
 
@@ -703,14 +667,13 @@ namespace Newkon
   {
     if (!isStreaming)
       return;
-    state->resetInProgress = true;
     state->callbacksEnabled = false;
     Logger::getInstance() << "ASIO stream stopping" << std::endl;
     ASIOStop();
     // Wait for any in-flight callback to finish before freeing buffers
     for (int spins = 0; spins < 10000; ++spins)
     {
-      if (state->inCallback == 0)
+      if (state->activeCallbackCount == 0)
         break;
       _mm_pause();
     }
@@ -738,7 +701,10 @@ namespace Newkon
   {
     // Ensure streaming is stopped and buffers are freed
     if (isStreaming)
+    {
+      Logger::getInstance() << "ASIO stream stopping called from shutdown" << std::endl;
       stopAudioStream();
+    }
 
     if (state->bufferInfos)
     {
@@ -763,12 +729,6 @@ namespace Newkon
 
   bool AsioInterface::getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels)
   {
-    if (state->resetInProgress)
-    {
-      if (outputBuffer)
-        std::memset(outputBuffer, 0, numSamples * numChannels * sizeof(float));
-      return false;
-    }
     if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0)
     {
       if (outputBuffer)
@@ -807,8 +767,7 @@ namespace Newkon
 
   bool AsioInterface::getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples)
   {
-    if (state->resetInProgress)
-      return false;
+    // no reset barrier
     if (!isStreaming || currentInterfaceIndex < 0 || currentInputIndex < 0 || !outL || !outR)
       return false;
 
@@ -859,8 +818,6 @@ namespace Newkon
 
   int AsioInterface::availableFrames()
   {
-    if (state->resetInProgress)
-      return 0;
     const int mask = static_cast<int>(ringBuffer.mask());
     const int wposNow = state->bufferPos;
     return (wposNow - state->readPos) & mask;

@@ -87,9 +87,6 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	tresult PLUGIN_API HardwareSynthProcessor::process(Vst::ProcessData &data)
 	{
-		// React to ASIO driver reset requests (buffer size/sample rate changes)
-		asioInterface.handlePendingReset();
-
 		// Read inputs parameter changes
 		if (data.inputParameterChanges)
 		{

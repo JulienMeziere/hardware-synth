@@ -107,11 +107,18 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	IPlugView *PLUGIN_API HardwareSynthController::createView(FIDString name)
 	{
+		static bool firstTime = true;
+		Logger::getInstance() << "Creating view: " << name << std::endl;
 		// Here the Host wants to open your editor (if you have one)
 		if (FIDStringsEqual(name, Vst::ViewType::kEditor))
 		{
 			// create your editor here and return a IPlugView ptr of it
 			this->editor = new VSTGUI::VST3Editor(this, "view", "editor.uidesc");
+			if (!firstTime)
+			{
+				return this->editor;
+			}
+			firstTime = false;
 
 			// Create a custom delegate to handle UI events
 			class ButtonCreationDelegate : public VSTGUI::VST3EditorDelegate
@@ -353,6 +360,7 @@ namespace Newkon
 				auto *processor2 = HardwareSynthProcessor::getCurrentInstance();
 				if (processor2 && processor2->getAsioInterface().connectToInput(static_cast<int>(inputIndex)))
 				{
+					Logger::getInstance() << "Starting audio streaming from the controller" << std::endl;
 					if (!processor2->getAsioInterface().startAudioStream())
 					{
 						Logger::getInstance() << "Failed to start audio streaming" << std::endl;
