@@ -9,8 +9,7 @@
 #include "public.sdk/source/vst/vstparameters.h"
 
 #include "../Logger.h"
-#include "../Hardware/MIDIDevices.h"
-#include "../Hardware/AsioInterfaces.h"
+#include "./HardwareSynthesizer/MIDIDevices.h"
 
 #include "Processor.h"
 #include "../cids.h"
@@ -70,11 +69,6 @@ namespace Newkon
 	//------------------------------------------------------------------------
 	tresult PLUGIN_API HardwareSynthProcessor::terminate()
 	{
-		// Here the Plug-in will be de-instantiated, last possibility to remove some memory!
-
-		// Ensure ASIO is properly shutdown
-		Newkon::AsioInterfaces::shutdown();
-
 		//---do not forget to call parent ------
 		return AudioEffect::terminate();
 	}
@@ -85,7 +79,7 @@ namespace Newkon
 		//--- called when the Plug-in is enable/disable (On/Off) -----
 		if (!state)
 		{
-			Newkon::AsioInterfaces::stopAudioStream();
+			asioInterface.stopAudioStream();
 		}
 		return AudioEffect::setActive(state);
 	}
@@ -94,7 +88,7 @@ namespace Newkon
 	tresult PLUGIN_API HardwareSynthProcessor::process(Vst::ProcessData &data)
 	{
 		// React to ASIO driver reset requests (buffer size/sample rate changes)
-		AsioInterfaces::handlePendingReset();
+		asioInterface.handlePendingReset();
 
 		// Read inputs parameter changes
 		if (data.inputParameterChanges)
@@ -166,9 +160,9 @@ namespace Newkon
 		if (data.numSamples > 0 && data.outputs && data.outputs[0].numChannels >= 2)
 		{
 			// Simple policy: if enough samples are available now, copy; otherwise leave buffers as-is
-			if (AsioInterfaces::availableFrames() >= data.numSamples)
+			if (asioInterface.availableFrames() >= data.numSamples)
 			{
-				AsioInterfaces::getAudioDataStereo(data.outputs[0].channelBuffers32[0], data.outputs[0].channelBuffers32[1], data.numSamples);
+				asioInterface.getAudioDataStereo(data.outputs[0].channelBuffers32[0], data.outputs[0].channelBuffers32[1], data.numSamples);
 			}
 			else
 			{

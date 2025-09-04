@@ -1,5 +1,5 @@
 #include "MIDIScheduler.h"
-#include "../Logger.h"
+#include "../../Logger.h"
 
 namespace Newkon
 {

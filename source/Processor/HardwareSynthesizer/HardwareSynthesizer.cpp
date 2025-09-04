@@ -1,5 +1,5 @@
 #include "HardwareSynthesizer.h"
-#include "../Logger.h"
+#include "../../Logger.h"
 #include <windows.h>
 #include <mmsystem.h>
 

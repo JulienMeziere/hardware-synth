@@ -10,7 +10,8 @@
 #include "public.sdk/source/vst/vstaudioeffect.h"
 
 #include "../params.h"
-#include "../Hardware/HardwareSynthesizer.h"
+#include "./HardwareSynthesizer/HardwareSynthesizer.h"
+#include "./Asio/AsioInterface.h"
 
 namespace Newkon
 {
@@ -76,6 +77,9 @@ namespace Newkon
 		/** Get the current processor instance (for UI access) */
 		static HardwareSynthProcessor *getCurrentInstance();
 
+		/** Get the ASIO interface */
+		AsioInterface &getAsioInterface() { return asioInterface; }
+
 		//------------------------------------------------------------------------
 	protected:
 		double sampleRate = 44100.0;
@@ -92,6 +96,7 @@ namespace Newkon
 
 		// Static reference for UI access
 		static HardwareSynthProcessor *currentInstance;
+		AsioInterface asioInterface;
 	};
 
 	//------------------------------------------------------------------------

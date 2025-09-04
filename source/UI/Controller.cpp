@@ -10,8 +10,7 @@
 #include "../cids.h"
 
 #include "../Logger.h"
-#include "../Hardware/MIDIDevices.h"
-#include "../Hardware/AsioInterfaces.h"
+#include "../Processor/HardwareSynthesizer/MIDIDevices.h"
 
 // VSTGUI includes for dynamic UI creation
 #include "vstgui4/vstgui/lib/vstguibase.h"
@@ -338,7 +337,8 @@ namespace Newkon
 			if (interfaceIndex < asioInterfaces.size())
 			{
 				selectedAsioInterface = static_cast<int>(interfaceIndex);
-				if (AsioInterfaces::connectToInterface(static_cast<int>(interfaceIndex)))
+				auto *processor = HardwareSynthProcessor::getCurrentInstance();
+				if (processor && processor->getAsioInterface().connectToInterface(static_cast<int>(interfaceIndex)))
 				{
 					showAsioInputs();
 				}
@@ -350,9 +350,10 @@ namespace Newkon
 			size_t inputIndex = tag - 3000;
 			if (inputIndex < asioInputs.size())
 			{
-				if (AsioInterfaces::connectToInput(static_cast<int>(inputIndex)))
+				auto *processor2 = HardwareSynthProcessor::getCurrentInstance();
+				if (processor2 && processor2->getAsioInterface().connectToInput(static_cast<int>(inputIndex)))
 				{
-					if (!AsioInterfaces::startAudioStream())
+					if (!processor2->getAsioInterface().startAudioStream())
 					{
 						Logger::getInstance() << "Failed to start audio streaming" << std::endl;
 					}
@@ -438,7 +439,8 @@ namespace Newkon
 							if (audioInputsScrollView)
 							{
 								// Get list of ASIO interfaces
-								asioInterfaces = AsioInterfaces::listAsioInterfaces();
+								auto *processor = HardwareSynthProcessor::getCurrentInstance();
+								asioInterfaces = processor ? processor->getAsioInterface().listAsioInterfaces() : std::vector<std::string>{};
 
 								// Create buttons for ASIO interfaces
 								createAsioInterfaceButtons();
@@ -478,7 +480,8 @@ namespace Newkon
 							if (asioInputsScrollView)
 							{
 								// Get list of ASIO inputs for the selected interface
-								asioInputs = AsioInterfaces::getAsioInputs(selectedAsioInterface);
+								auto *processor2 = HardwareSynthProcessor::getCurrentInstance();
+								asioInputs = processor2 ? processor2->getAsioInterface().getAsioInputs(selectedAsioInterface) : std::vector<std::string>{};
 
 								// Create buttons for ASIO inputs
 								createAsioInputButtons();
@@ -521,7 +524,7 @@ namespace Newkon
 		{
 			VSTGUI::CTextButton *button = new VSTGUI::CTextButton(
 					VSTGUI::CRect(10, currentY, 10 + availableWidth, currentY + buttonHeight),
-					this, kAudioInputButton0 + i, asioInterfaces[i].c_str());
+					this, static_cast<int32_t>(kAudioInputButton0 + static_cast<int32_t>(i)), asioInterfaces[i].c_str());
 
 			// Style the button (same as MIDI device buttons)
 			// Style the button with gray background using gradient
@@ -576,7 +579,7 @@ namespace Newkon
 		{
 			VSTGUI::CTextButton *button = new VSTGUI::CTextButton(
 					VSTGUI::CRect(10, currentY, 10 + availableWidth, currentY + buttonHeight),
-					this, kAsioInputButton0 + i, asioInputs[i].c_str());
+					this, static_cast<int32_t>(kAsioInputButton0 + static_cast<int32_t>(i)), asioInputs[i].c_str());
 
 			// Style the button (same as MIDI device buttons)
 			// Style the button with gray background using gradient

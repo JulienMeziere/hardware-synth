@@ -20,8 +20,7 @@
 #include <string>
 #include <memory>
 
-#include "../Hardware/HardwareSynthesizer.h"
-#include "../Hardware/AsioInterfaces.h"
+#include "../Processor/HardwareSynthesizer/HardwareSynthesizer.h"
 #include "../Processor/Processor.h"
 
 namespace Newkon

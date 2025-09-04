@@ -1,6 +1,6 @@
-#include "AsioInterfaces.h"
+#include "AsioInterface.h"
 #include "RingBufferFloat.h"
-#include "../Logger.h"
+#include "../../Logger.h"
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -25,12 +25,6 @@ extern bool loadAsioDriver(char *name);
 
 namespace Newkon
 {
-  // Static member initialization
-  std::vector<AsioInterfaceInfo> AsioInterfaces::asioDevices;
-  int AsioInterfaces::currentInterfaceIndex = -1;
-  int AsioInterfaces::currentInputIndex = -1;
-  bool AsioInterfaces::isStreaming = false;
-
   // ASIO driver state
   static ASIODriverInfo g_driverInfo = {};
   static ASIOCallbacks g_callbacks = {};
@@ -344,7 +338,14 @@ namespace Newkon
     }
   }
 
-  void AsioInterfaces::handlePendingReset()
+  AsioInterface::AsioInterface() : currentInterfaceIndex(-1), currentInputIndex(-1), isStreaming(false) {}
+
+  AsioInterface::~AsioInterface()
+  {
+    shutdown();
+  }
+
+  void AsioInterface::handlePendingReset()
   {
     if (!s_resetRequested)
       return;
@@ -404,7 +405,7 @@ namespace Newkon
     s_resetInProgress = false;
   }
 
-  std::vector<std::string> AsioInterfaces::listAsioInterfaces()
+  std::vector<std::string> AsioInterface::listAsioInterfaces()
   {
     asioDevices.clear();
     std::vector<std::string> deviceNames;
@@ -428,7 +429,7 @@ namespace Newkon
     return deviceNames;
   }
 
-  bool AsioInterfaces::connectToInterface(int deviceIndex)
+  bool AsioInterface::connectToInterface(int deviceIndex)
   {
     if (deviceIndex < 0 || deviceIndex >= static_cast<int>(asioDevices.size()))
     {
@@ -507,7 +508,7 @@ namespace Newkon
     return true;
   }
 
-  std::vector<std::string> AsioInterfaces::getAsioInputs(int deviceIndex)
+  std::vector<std::string> AsioInterface::getAsioInputs(int deviceIndex)
   {
     std::vector<std::string> inputs;
 
@@ -537,12 +538,12 @@ namespace Newkon
     return inputs;
   }
 
-  const std::vector<AsioInterfaceInfo> &AsioInterfaces::getAsioDevices()
+  const std::vector<AsioInterfaceInfo> &AsioInterface::getAsioDevices()
   {
     return asioDevices;
   }
 
-  bool AsioInterfaces::connectToInput(int inputIndex)
+  bool AsioInterface::connectToInput(int inputIndex)
   {
     if (currentInterfaceIndex < 0 || currentInterfaceIndex >= static_cast<int>(asioDevices.size()))
     {
@@ -565,7 +566,7 @@ namespace Newkon
     return true;
   }
 
-  bool AsioInterfaces::startAudioStream()
+  bool AsioInterface::startAudioStream()
   {
     if (currentInterfaceIndex < 0 || currentInputIndex < 0)
     {
@@ -580,7 +581,7 @@ namespace Newkon
       stopAudioStream();
     }
 
-    long available2 = g_inputChannels - AsioInterfaces::currentInputIndex;
+    long available2 = g_inputChannels - AsioInterface::currentInputIndex;
     if (available2 < 0)
       available2 = 0;
     const int channelsToUse = static_cast<int>(available2 < 2 ? available2 : 2);
@@ -725,7 +726,7 @@ namespace Newkon
     return true;
   }
 
-  void AsioInterfaces::stopAudioStream()
+  void AsioInterface::stopAudioStream()
   {
     if (!isStreaming)
       return;
@@ -762,7 +763,7 @@ namespace Newkon
     Logger::getInstance() << "ASIO stream stopped" << std::endl;
   }
 
-  void AsioInterfaces::shutdown()
+  void AsioInterface::shutdown()
   {
     // Ensure streaming is stopped and buffers are freed
     if (isStreaming)
@@ -793,7 +794,7 @@ namespace Newkon
     currentInputIndex = -1;
   }
 
-  bool AsioInterfaces::getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels)
+  bool AsioInterface::getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels)
   {
     if (s_resetInProgress)
     {
@@ -837,7 +838,7 @@ namespace Newkon
     return true;
   }
 
-  bool AsioInterfaces::getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples)
+  bool AsioInterface::getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples)
   {
     if (s_resetInProgress)
       return false;
@@ -889,7 +890,7 @@ namespace Newkon
     return true;
   }
 
-  int AsioInterfaces::availableFrames()
+  int AsioInterface::availableFrames()
   {
     if (s_resetInProgress)
       return 0;
@@ -900,7 +901,7 @@ namespace Newkon
     return (wposNow - g_readPos) & mask;
   }
 
-  bool AsioInterfaces::isConnectedAndStreaming()
+  bool AsioInterface::isConnectedAndStreaming()
   {
     return isStreaming && currentInterfaceIndex >= 0 && currentInputIndex >= 0 && s_ring != nullptr;
   }

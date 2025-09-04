@@ -13,56 +13,59 @@ namespace Newkon
     bool isDefault;
   };
 
-  class AsioInterfaces
+  class AsioInterface
   {
   public:
+    AsioInterface();
+    ~AsioInterface();
+
     // Get list of available ASIO interfaces
-    static std::vector<std::string> listAsioInterfaces();
+    std::vector<std::string> listAsioInterfaces();
 
     // Connect to a specific ASIO interface by index
-    static bool connectToInterface(int deviceIndex);
+    bool connectToInterface(int deviceIndex);
 
     // Get available inputs for a specific ASIO interface
-    static std::vector<std::string> getAsioInputs(int deviceIndex);
+    std::vector<std::string> getAsioInputs(int deviceIndex);
 
     // Connect to a specific input on the current ASIO interface
-    static bool connectToInput(int inputIndex);
+    bool connectToInput(int inputIndex);
 
     // Start audio streaming from the connected input
-    static bool startAudioStream();
+    bool startAudioStream();
 
     // Stop audio streaming
-    static void stopAudioStream();
+    void stopAudioStream();
 
     // Properly shutdown ASIO driver and clear state
-    static void shutdown();
+    void shutdown();
 
     // Get audio data from the connected input (called by VST process)
-    static bool getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels);
+    bool getAudioData(float *__restrict outputBuffer, int numSamples, int numChannels);
 
     // Get audio data directly into separate L/R buffers (stereo)
-    static bool getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples);
+    bool getAudioDataStereo(float *__restrict outL, float *__restrict outR, int numSamples);
 
     // Query how many mono frames are currently available to read
-    static int availableFrames();
+    int availableFrames();
 
     // True if an ASIO interface and input are connected and streaming
-    static bool isConnectedAndStreaming();
+    bool isConnectedAndStreaming();
 
     // Handle driver reset requests (buffer size/sample rate changes)
-    static void handlePendingReset();
+    void handlePendingReset();
 
     // Get the stored ASIO interfaces
-    static const std::vector<AsioInterfaceInfo> &getAsioDevices();
+    const std::vector<AsioInterfaceInfo> &getAsioDevices();
 
   private:
     // Store the list of ASIO interfaces
-    static std::vector<AsioInterfaceInfo> asioDevices;
+    std::vector<AsioInterfaceInfo> asioDevices;
 
     // Current connection state
-    static int currentInterfaceIndex;
-    static int currentInputIndex;
-    static bool isStreaming;
+    int currentInterfaceIndex;
+    int currentInputIndex;
+    bool isStreaming;
 
     // Internal ring buffer managed in implementation file
   };

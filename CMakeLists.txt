@@ -34,16 +34,16 @@ smtg_add_vst3plugin(Hardware_Synth
     source/cids.h
     source/entry.cpp
     source/Logger.h
-    source/Hardware/MIDIDevices.h
-    source/Hardware/MIDIDevices.cpp
-    source/Hardware/HardwareSynthesizer.h
-    source/Hardware/HardwareSynthesizer.cpp
-    source/Hardware/MIDIScheduler.h
-    source/Hardware/MIDIScheduler.cpp
-    source/Hardware/AsioInterfaces.h
-    source/Hardware/AsioInterfaces.cpp
-    source/Hardware/RingBufferFloat.h
-    source/Hardware/RingBufferFloat.cpp
+    source/Processor/HardwareSynthesizer/MIDIScheduler.h
+    source/Processor/HardwareSynthesizer/MIDIScheduler.cpp
+    source/Processor/HardwareSynthesizer/HardwareSynthesizer.h
+    source/Processor/HardwareSynthesizer/HardwareSynthesizer.cpp
+    source/Processor/HardwareSynthesizer/MIDIDevices.h
+    source/Processor/HardwareSynthesizer/MIDIDevices.cpp
+    source/Processor/Asio/AsioInterface.h
+    source/Processor/Asio/AsioInterface.cpp
+    source/Processor/Asio/RingBufferFloat.h
+    source/Processor/Asio/RingBufferFloat.cpp
 
     # ASIO SDK (host-side) sources
     ${asiosdk_SOURCE_DIR}/host/pc/asiolist.cpp
