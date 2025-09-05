@@ -676,7 +676,6 @@ namespace Newkon
           delete[] state->channelInfos;
           state->channelInfos = nullptr;
         }
-        ringBuffer.sync();
         AsioInterface::s_current = nullptr;
         return false;
       }
