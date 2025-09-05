@@ -77,10 +77,6 @@ namespace Newkon
 	tresult PLUGIN_API HardwareSynthProcessor::setActive(TBool state)
 	{
 		//--- called when the Plug-in is enable/disable (On/Off) -----
-		if (!state)
-		{
-			asioInterface.stopAudioStream();
-		}
 		return AudioEffect::setActive(state);
 	}
 

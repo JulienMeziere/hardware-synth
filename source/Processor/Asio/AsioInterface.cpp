@@ -38,8 +38,6 @@ namespace Newkon
     long preferredSize = 0;
     long granularity = 0;
     ASIOSampleRate sampleRate = 0.0;
-    int bufferPos = 0;
-    int readPos = 0;
     volatile bool callbacksEnabled = false;
     volatile int activeCallbackCount = 0;
     int selectedInputIndex = -1;
@@ -130,24 +128,25 @@ namespace Newkon
         return;
       }
 
-      int wpos = st->bufferPos;
+      uint32_t wpos = self->ringBuffer.getWritePos();
       int framesToWrite = static_cast<int>(st->preferredSize);
-      const int cap = static_cast<int>(self->ringBuffer.capacity());
+      const uint32_t cap = self->ringBuffer.capacity();
       if (wpos < 0 || wpos >= cap)
         wpos = 0;
-      if (framesToWrite > cap)
-        framesToWrite = cap;
-      int contFrames = cap - wpos;
+      if (framesToWrite > (int)cap)
+        framesToWrite = (int)cap;
+      int contFrames = (int)cap - (int)wpos;
       if (contFrames < 0)
         contFrames = 0;
       int f1 = framesToWrite < contFrames ? framesToWrite : contFrames;
+      const int totalToWrite = framesToWrite;
 
       if (st->kind[0] == AsioState::kKindFloat32)
       {
         const float *pf = static_cast<const float *>(src0);
         std::memcpy(self->ringBuffer.data() + wpos, pf, sizeof(float) * f1);
         wpos += f1;
-        if (wpos == (int)self->ringBuffer.capacity())
+        if (wpos == self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
@@ -177,7 +176,7 @@ namespace Newkon
         for (; i < f1; i++)
           self->ringBuffer.data()[wpos + i] = ps[i] * s;
         wpos += f1;
-        if (wpos == (int)self->ringBuffer.capacity())
+        if (wpos == self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
@@ -216,7 +215,7 @@ namespace Newkon
         for (; i < f1; i++)
           self->ringBuffer.data()[wpos + i] = pi[i] * s;
         wpos += f1;
-        if (wpos == (int)self->ringBuffer.capacity())
+        if (wpos == self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
@@ -239,7 +238,7 @@ namespace Newkon
         for (int i = 0; i < f1; i++)
           self->ringBuffer.data()[wpos + i] = st->convertSample[0] ? st->convertSample[0](src0, i) : 0.0f;
         wpos += f1;
-        if (wpos == (int)self->ringBuffer.capacity())
+        if (wpos == self->ringBuffer.capacity())
           wpos = 0;
         framesToWrite -= f1;
         if (framesToWrite > 0)
@@ -249,8 +248,8 @@ namespace Newkon
           wpos = framesToWrite;
         }
       }
-
-      st->bufferPos = wpos;
+      // Advance writer head by total written frames
+      self->ringBuffer.advanceWrite((uint32_t)totalToWrite);
     }
     --st->activeCallbackCount;
   }
@@ -271,7 +270,6 @@ namespace Newkon
 
   long AsioInterface::asioMessageThunk(long selector, long value, void *message, double *opt)
   {
-    bool resetRequested = false;
     AsioInterface *self = AsioInterface::s_current;
     if (!self || !self->state)
       return 0;
@@ -283,31 +281,63 @@ namespace Newkon
     case kAsioEngineVersion:
       return 2;
     case kAsioResetRequest:
-      resetRequested = true;
-      Logger::getInstance() << "Message reset" << std::endl;
+      self->handlePendingReset();
       return 1;
     case kAsioResyncRequest:
-      // Latency or buffer size may have changed; handle like reset
-      resetRequested = true;
-      Logger::getInstance() << "Message resync" << std::endl;
+      self->handlePendingReset();
       return 1;
     case kAsioLatenciesChanged:
-      // Not all drivers use ResetRequest; be safe and rebuild buffers
-      resetRequested = true;
-      Logger::getInstance() << "Message latencies changed" << std::endl;
+      self->handlePendingReset();
       return 1;
     default:
       return 0;
     }
-    if (resetRequested)
-      self->handlePendingReset();
   }
 
   void AsioInterface::handlePendingReset()
   {
-    Logger::getInstance() << "ASIO reset requested by driver" << std::endl;
-    if (state)
-      state->callbacksEnabled = false;
+    if (!state)
+      return;
+
+    // Pause producer work and wait for any in-flight callback to finish
+    state->callbacksEnabled = false;
+    for (int spins = 0; spins < 10000; ++spins)
+    {
+      if (state->activeCallbackCount == 0)
+        break;
+      _mm_pause();
+    }
+
+    // Re-query buffer sizes and sample rate from driver
+    long minS = state->minSize, maxS = state->maxSize, prefS = state->preferredSize, gran = state->granularity;
+    ASIOError bsRc = ASIOGetBufferSize(&minS, &maxS, &prefS, &gran);
+    if (bsRc == ASE_OK)
+    {
+      // state->minSize = minS;
+      // state->maxSize = maxS;
+      // state->preferredSize = prefS;
+      // state->granularity = gran;
+    }
+
+    ASIOSampleRate sr = 0.0;
+    if (ASIOGetSampleRate(&sr) == ASE_OK)
+      state->sampleRate = sr;
+
+    // Recompute ring capacity based on new timing
+    const int minFrames100ms = (state->sampleRate > 0 ? static_cast<int>(state->sampleRate * 0.1) : state->preferredSize * 8);
+    const int minFrames = (minFrames100ms > (state->preferredSize * 8) ? minFrames100ms : (state->preferredSize * 8));
+    int pow2 = 1;
+    while (pow2 < minFrames)
+      pow2 <<= 1;
+    pow2 <<= 1; // extra headroom
+
+    ringBuffer.resize(static_cast<uint32_t>(pow2));
+    Logger::getInstance() << "ASIO reset applied: preferred=" << state->preferredSize
+                          << ", sr=" << state->sampleRate
+                          << ", ringCapacity=" << ringBuffer.capacity() << std::endl;
+
+    // Resume producer
+    state->callbacksEnabled = true;
   }
 
   AsioInterface::AsioInterface() : currentInterfaceIndex(-1), currentInputIndex(-1), isStreaming(false), ringBuffer(1)
@@ -627,8 +657,6 @@ namespace Newkon
     // Double capacity for extra headroom against jitter/underruns
     pow2 <<= 1;
     ringBuffer.resize(static_cast<uint32_t>(pow2));
-    state->bufferPos = 0;
-    state->readPos = 0;
 
     state->callbacksEnabled = false;
     {
@@ -648,8 +676,7 @@ namespace Newkon
           delete[] state->channelInfos;
           state->channelInfos = nullptr;
         }
-        state->bufferPos = 0;
-        state->readPos = 0;
+        ringBuffer.sync();
         AsioInterface::s_current = nullptr;
         return false;
       }
@@ -688,9 +715,7 @@ namespace Newkon
       delete[] state->channelInfos;
       state->channelInfos = nullptr;
     }
-    // keep member ring buffer alive
-    state->bufferPos = 0;
-    state->readPos = 0;
+
     isStreaming = false;
     Logger::getInstance() << "ASIO stream stopped" << std::endl;
     if (AsioInterface::s_current == this)
@@ -716,9 +741,6 @@ namespace Newkon
       delete[] state->channelInfos;
       state->channelInfos = nullptr;
     }
-    // keep member ring buffer alive
-    state->bufferPos = 0;
-    state->readPos = 0;
 
     // Tell driver we are done
     ASIODisposeBuffers();
@@ -741,21 +763,20 @@ namespace Newkon
     if (total <= 0)
       return false;
 
-    // Ensure read cursor is within bounds
-    if (state->readPos < 0 || state->readPos >= (int)ringBuffer.capacity())
-      state->readPos = 0;
+    // read head is maintained inside ringBuffer
 
     // Compute available frames (mono) and clamp reads to avoid underrun
-    const int wposNow = state->bufferPos;
-    const int mask = static_cast<int>(ringBuffer.mask());
-    int available = (wposNow - state->readPos) & mask;
+    const uint32_t wposNow = ringBuffer.getWritePos();
+    const uint32_t rposNow = ringBuffer.getReadPos();
+    const uint32_t mask = ringBuffer.mask();
+    uint32_t available = (wposNow - rposNow) & mask;
 
     int toRead = total < available ? total : available;
     for (int i = 0; i < toRead; i++)
     {
-      outputBuffer[i] = ringBuffer.data()[state->readPos];
-      state->readPos = (state->readPos + 1) & mask;
+      outputBuffer[i] = ringBuffer.data()[rposNow + i & mask];
     }
+    ringBuffer.advanceRead((uint32_t)toRead);
     if (toRead < total)
     {
       Logger::getInstance() << "Underrun: requested " << total << ", available " << available << std::endl;
@@ -773,38 +794,39 @@ namespace Newkon
     if (numSamples <= 0)
       return false;
 
-    // Ensure read cursor is within bounds
-    if (state->readPos < 0 || state->readPos >= (int)ringBuffer.capacity())
-      state->readPos = 0;
+    // read head is maintained inside ringBuffer
 
     // Compute available frames (mono) and clamp reads to avoid underrun
-    const int wposNow = state->bufferPos;
-    const int mask = static_cast<int>(ringBuffer.mask());
-    int available = (wposNow - state->readPos) & mask;
+    const uint32_t wposNow = ringBuffer.getWritePos();
+    const uint32_t rposNow = ringBuffer.getReadPos();
+    const uint32_t mask = ringBuffer.mask();
+    uint32_t available = (wposNow - rposNow) & mask;
     int framesToRead = numSamples < available ? numSamples : available;
 
     // Ring is mono frames; duplicate to L/R with contiguous fast path
     int framesLeft = framesToRead;
-    int contFrames = static_cast<int>(ringBuffer.capacity()) - state->readPos;
+    uint32_t rpos2 = ringBuffer.getReadPos();
+    int contFrames = static_cast<int>(ringBuffer.capacity() - rpos2);
     int f1 = framesLeft < contFrames ? framesLeft : contFrames;
     for (int i = 0; i < f1; i++)
     {
-      float v = ringBuffer.data()[state->readPos++];
+      float v = ringBuffer.data()[rpos2++];
       outL[i] = v;
       outR[i] = v;
     }
     framesLeft -= f1;
     if (framesLeft > 0)
     {
-      state->readPos = 0;
+      rpos2 = 0;
       int base = f1;
       for (int i = 0; i < framesLeft; i++)
       {
-        float v = ringBuffer.data()[state->readPos++];
+        float v = ringBuffer.data()[rpos2++];
         outL[base + i] = v;
         outR[base + i] = v;
       }
     }
+    ringBuffer.advanceRead((uint32_t)framesToRead);
     if (framesToRead < numSamples)
     {
       Logger::getInstance() << "Underrun: requested " << numSamples << ", available " << available << std::endl;
@@ -817,9 +839,12 @@ namespace Newkon
 
   int AsioInterface::availableFrames()
   {
-    const int mask = static_cast<int>(ringBuffer.mask());
-    const int wposNow = state->bufferPos;
-    return (wposNow - state->readPos) & mask;
+    if (!state || !state->callbacksEnabled)
+      return 0;
+    const uint32_t mask = ringBuffer.mask();
+    const uint32_t wposNow = ringBuffer.getWritePos();
+    const uint32_t rposNow = ringBuffer.getReadPos();
+    return (wposNow - rposNow) & mask;
   }
 
   bool AsioInterface::isConnectedAndStreaming()
