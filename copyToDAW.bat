@@ -45,19 +45,19 @@ if '%errorlevel%' NEQ '0' (
     echo Hardware Synth - Copy to DAW
     echo ========================================
     echo.
-    echo Checking for processes using the VST file...
-    
-    :: Try to close any processes that might be using the VST file
-    taskkill /f /im "FL64.exe" >nul 2>&1
-    taskkill /f /im "Ableton Live 11.exe" >nul 2>&1
-    taskkill /f /im "Ableton Live 12.exe" >nul 2>&1
-    taskkill /f /im "Reaper.exe" >nul 2>&1
-    taskkill /f /im "Cubase.exe" >nul 2>&1
-    taskkill /f /im "Studio One.exe" >nul 2>&1
-    
-    echo Waiting for file handles to be released...
-    timeout /t 3 /nobreak >nul
-    
+    set DEST_DIR=C:\Program Files\Common Files\VST3\Hardware_Synth
+    :check_lock
+    echo Checking whether the installed VST is in use...
+    powershell -NoProfile -Command "$p='%DEST_DIR%'; if (Test-Path $p) { $locked=$false; foreach ($f in Get-ChildItem -Path $p -Recurse -File) { try { $s=[System.IO.File]::Open($f.FullName,[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None); $s.Close() } catch { $locked=$true; break } }; if ($locked) { exit 1 } else { exit 0 } } else { exit 0 }"
+    if %errorlevel% neq 0 (
+        echo.
+        echo The VST plugin is currently in use.
+        echo Close plugin instances in your DAW.
+        echo Press any key to retry, or Ctrl+C to abort...
+        pause >nul
+        goto check_lock
+    )
+
     echo Copying VST plugin to DAW folder...
     xcopy "%BATCH_DIR%build\VST3\%BUILD_CONFIG%\Hardware_Synth.vst3" "C:\Program Files\Common Files\VST3\Hardware_Synth\" /E /H /Y
 
@@ -80,4 +80,5 @@ if '%errorlevel%' NEQ '0' (
         echo - Or restart your computer if the issue persists
     )
 
+:end
 pause
