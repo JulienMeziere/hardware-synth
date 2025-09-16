@@ -770,7 +770,7 @@ namespace Newkon
     const uint32_t mask = ringBuffer.mask();
     uint32_t available = (wposNow - rposNow) & mask;
 
-    int toRead = total < available ? total : available;
+    int toRead = total < static_cast<int>(available) ? total : static_cast<int>(available);
     for (int i = 0; i < toRead; i++)
     {
       outputBuffer[i] = ringBuffer.data()[rposNow + i & mask];
@@ -800,7 +800,7 @@ namespace Newkon
     const uint32_t rposNow = ringBuffer.getReadPos();
     const uint32_t mask = ringBuffer.mask();
     uint32_t available = (wposNow - rposNow) & mask;
-    int framesToRead = numSamples < available ? numSamples : available;
+    int framesToRead = numSamples < static_cast<int>(available) ? numSamples : static_cast<int>(available);
 
     // Ring is mono frames; duplicate to L/R with contiguous fast path
     int framesLeft = framesToRead;
